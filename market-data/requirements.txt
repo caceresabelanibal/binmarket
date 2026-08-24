@@ -1,0 +1,4 @@
+# market-data has no dependencies beyond what `binmarket-shared` already
+# brings in (websockets, httpx, redis, SQLAlchemy). Kept as an explicit,
+# empty-but-present file so a future service-specific dependency has an
+# obvious place to go without touching the Dockerfile.

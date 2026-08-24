@@ -1,0 +1,36 @@
+# Local development overrides: hot-reload for backend/trading-engine/market-data
+# (bind-mounted source, autoreload) and the Vite dev server for the frontend
+# instead of the production nginx build.
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+services:
+  backend:
+    volumes:
+      - ./shared:/app/shared
+      - ./backend/app:/app/backend/app
+    command: ["sh", "-c", "alembic -c /app/database/alembic.ini upgrade head && python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --app-dir /app/backend"]
+
+  trading-engine:
+    volumes:
+      - ./shared:/app/shared
+      - ./trading-engine/app:/app/trading-engine/app
+    command: ["python", "-u", "main.py"]
+    working_dir: /app/trading-engine
+
+  market-data:
+    volumes:
+      - ./shared:/app/shared
+      - ./market-data/app:/app/market-data/app
+    command: ["python", "-u", "main.py"]
+    working_dir: /app/market-data
+
+  frontend:
+    build:
+      target: dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]

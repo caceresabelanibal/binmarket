@@ -1,0 +1,3 @@
+# trading-engine has no dependencies beyond `binmarket-shared` (which already
+# provides pandas/numpy for indicators, SQLAlchemy, redis, httpx/websockets).
+# Kept as an explicit placeholder for future service-specific dependencies.

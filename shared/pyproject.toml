@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "binmarket-shared"
+version = "0.1.0"
+description = "Shared domain layer for BinMarket: config, DB models, Binance client, notifications."
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy>=2.0,<2.1",
+    "psycopg2-binary>=2.9,<3.0",
+    "alembic>=1.13,<2.0",
+    "redis>=5.0,<6.0",
+    "pydantic>=2.6,<3.0",
+    "pydantic-settings>=2.2,<3.0",
+    "httpx>=0.27,<0.28",
+    "websockets>=12.0,<13.0",
+    "python-dateutil>=2.9,<3.0",
+    "numpy>=1.26,<2.0",
+    "pandas>=2.2,<2.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2,<9.0",
+    "pytest-mock>=3.14,<4.0",
+    "respx>=0.21,<0.22",
+]
+
+[tool.setuptools.packages.find]
+include = ["binmarket_shared*"]

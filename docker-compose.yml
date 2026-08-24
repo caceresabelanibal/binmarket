@@ -1,0 +1,108 @@
+x-python-base: &python-base
+  environment: &python-env
+    APP_ENV: ${APP_ENV:-production}
+    SECRET_KEY: ${SECRET_KEY}
+    TIMEZONE: ${TIMEZONE:-UTC}
+    ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+    ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+    BINANCE_API_KEY: ${BINANCE_API_KEY}
+    BINANCE_API_SECRET: ${BINANCE_API_SECRET}
+    BINANCE_ENVIRONMENT: ${BINANCE_ENVIRONMENT:-testnet}
+    POSTGRES_DB: ${POSTGRES_DB:-binmarket}
+    POSTGRES_USER: ${POSTGRES_USER:-binmarket}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: 5432
+    REDIS_URL: redis://redis:6379/0
+    CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+    SMTP_HOST: ${SMTP_HOST:-}
+    SMTP_PORT: ${SMTP_PORT:-587}
+    SMTP_USERNAME: ${SMTP_USERNAME:-}
+    SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+    ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
+    ENGINE_LOOP_INTERVAL_SECONDS: ${ENGINE_LOOP_INTERVAL_SECONDS:-15}
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-binmarket}
+      POSTGRES_USER: ${POSTGRES_USER:-binmarket}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-binmarket}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    <<: *python-base
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  market-data:
+    <<: *python-base
+    build:
+      context: .
+      dockerfile: market-data/Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  trading-engine:
+    <<: *python-base
+    build:
+      context: .
+      dockerfile: trading-engine/Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
