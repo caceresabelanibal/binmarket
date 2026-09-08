@@ -56,12 +56,14 @@ class RiskManager:
         return self.realized_pnl_since(mode, datetime.now(timezone.utc) - timedelta(days=7))
 
     def consecutive_losing_trades(self, mode: TradingMode) -> int:
-        stmt = (
-            select(Position)
-            .where(Position.status == PositionStatus.CLOSED, Position.mode == mode)
-            .order_by(Position.closed_at.desc())
-            .limit(50)
-        )
+        stmt = select(Position).where(Position.status == PositionStatus.CLOSED, Position.mode == mode)
+        # A cleared Emergency Stop is a human explicitly acknowledging the
+        # streak and choosing to resume - trades closed before that moment
+        # no longer count, or clearing it could never stick (see
+        # losing_streak_reset_at's docstring).
+        if self.settings.losing_streak_reset_at is not None:
+            stmt = stmt.where(Position.closed_at >= self.settings.losing_streak_reset_at)
+        stmt = stmt.order_by(Position.closed_at.desc()).limit(50)
         count = 0
         for p in self.db.execute(stmt).scalars().all():
             if p.realized_pnl < 0:
@@ -166,6 +168,7 @@ class RiskManager:
     def clear_emergency_stop(self, cleared_by: str, note: str | None = None) -> None:
         self.settings.emergency_stop_active = False
         self.settings.emergency_stop_reason = None
+        self.settings.losing_streak_reset_at = datetime.now(timezone.utc)
         self.db.add(RiskEvent(
             event_type="EMERGENCY_STOP_CLEARED",
             severity=RiskSeverity.INFO,

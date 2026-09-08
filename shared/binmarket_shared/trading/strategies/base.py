@@ -69,6 +69,13 @@ class BaseStrategy(ABC):
     version: str = "1.0.0"
     description: str = ""
     default_params: dict[str, Any] = {}
+    # Which candle timeframe this strategy actually trades on. Regime
+    # classification always uses 1h (see engine_loop.REGIME_TIMEFRAME) so
+    # every strategy is judged against the same "is this a good environment"
+    # read, but a strategy can generate its entries/exits off a different,
+    # faster timeframe — this is what lets a scalping strategy fire many
+    # times a day without needing its own copy of the regime logic.
+    preferred_timeframe: str = "1h"
 
     def __init__(self, params: dict[str, Any] | None = None):
         self.params = {**self.default_params, **(params or {})}

@@ -3,12 +3,14 @@ from __future__ import annotations
 from .base import BaseStrategy
 from .breakout import BreakoutStrategy
 from .mean_reversion import MeanReversionStrategy
+from .scalping import ScalpingStrategy
 from .trend_following import TrendFollowingStrategy
 
 STRATEGY_REGISTRY: dict[str, type[BaseStrategy]] = {
     TrendFollowingStrategy.name: TrendFollowingStrategy,
     MeanReversionStrategy.name: MeanReversionStrategy,
     BreakoutStrategy.name: BreakoutStrategy,
+    ScalpingStrategy.name: ScalpingStrategy,
 }
 
 

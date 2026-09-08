@@ -26,6 +26,29 @@ export interface Settings {
   emergency_stop_reason: string | null;
   wizard_completed: boolean;
   wizard_step: number;
+  auto_select_symbols_enabled: boolean;
+  auto_select_max_symbols: number;
+  auto_select_min_volume_usdt: number;
+  stream_all_timeframes: boolean;
+  orderbook_update_speed_ms: number;
+}
+
+export interface BandwidthCategoryUsage {
+  bytes_per_min: number;
+  kb_per_sec: number;
+}
+
+export interface BandwidthUsage {
+  measured_minute: string;
+  categories: Record<"ticker" | "orderbook" | "klines", BandwidthCategoryUsage>;
+  total_bytes_per_min: number;
+  total_kb_per_sec: number;
+  estimated_mb_per_hour: number;
+  selected_symbols_count: number;
+  streams_per_symbol: number;
+  total_streams: number;
+  stream_all_timeframes: boolean;
+  orderbook_update_speed_ms: number;
 }
 
 export interface SymbolInfo {
@@ -35,6 +58,7 @@ export interface SymbolInfo {
   status: string;
   is_selected: boolean;
   is_favorite: boolean;
+  is_auto_selected: boolean;
   price_tick_size: number;
   lot_step_size: number;
   min_notional: number;
@@ -114,6 +138,9 @@ export interface Order {
   reason: string;
   is_manual: boolean;
   created_at: string;
+  position_id: string | null;
+  position_status: PositionStatus | null;
+  position_realized_pnl: number | null;
 }
 
 export interface Position {
@@ -226,6 +253,21 @@ export interface BinanceTotalValue {
   breakdown?: BinanceAssetValue[];
   unvalued_assets?: { asset: string; amount: number }[];
   error?: string;
+}
+
+export interface RealAccountHistoryEntry {
+  id: number;
+  taken_at: string;
+  total_usdt: number;
+  total_ars: number | null;
+  usdt_ars_rate: number | null;
+}
+
+export interface RealAccountHistoryResponse {
+  items: RealAccountHistoryEntry[];
+  total: number;
+  page: number;
+  page_size: number;
 }
 
 export interface BinanceAccount {

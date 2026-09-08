@@ -47,6 +47,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def no_store_cache_control(request, call_next):
+    # Every response here is live account/trading state (balances, positions,
+    # signals) - there is no endpoint where a cached copy is ever correct to
+    # show the user. Without this, a browser can silently serve a stale GET
+    # response for an identical URL (e.g. the dashboard's real-balance card)
+    # with no error and no visible sign anything is wrong.
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(settings_router.router)

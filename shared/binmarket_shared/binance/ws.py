@@ -20,7 +20,7 @@ from binmarket_shared.binance.client import Environment, ws_base_url
 
 logger = logging.getLogger("binmarket.binance.ws")
 
-OnMessage = Callable[[dict], Awaitable[None]]
+OnMessage = Callable[[dict, int, str | None], Awaitable[None]]
 OnStatusChange = Callable[[str], Awaitable[None]]
 
 
@@ -62,13 +62,19 @@ class BinanceWebSocketClient:
                     async for raw in ws:
                         if self._stop.is_set():
                             break
+                        num_bytes = len(raw) if isinstance(raw, bytes) else len(raw.encode("utf-8"))
                         try:
                             payload = json.loads(raw)
                         except json.JSONDecodeError:
                             logger.warning("Malformed WS payload, skipping")
                             continue
+                        # Combined-stream envelope: {"stream": "btcusdt@depth5", "data": {...}}.
+                        # Some payloads (partial book depth, notably) never
+                        # repeat the symbol inside `data` at all — the stream
+                        # name is the *only* place it's identifiable.
+                        stream_name = payload.get("stream") if "data" in payload else None
                         data = payload.get("data", payload)
-                        await self._on_message(data)
+                        await self._on_message(data, num_bytes, stream_name)
             except (WebSocketException, OSError) as exc:
                 logger.warning("Binance WS disconnected (%s), reconnecting in %.1fs", exc, backoff)
                 await self._emit_status("disconnected")

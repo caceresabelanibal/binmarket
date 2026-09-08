@@ -61,6 +61,13 @@ class BinanceClient:
             timeout=timeout,
             headers={"X-MBX-APIKEY": api_key} if api_key else {},
         )
+        # Binance rejects any signed request whose timestamp is more than
+        # ~1000ms ahead of its own server clock (code -1021), regardless of
+        # recvWindow. Docker/WSL2 clocks drift after a host sleep/resume, so
+        # rather than trust the container's clock we self-correct the first
+        # time we actually see -1021 (see `_request`) and keep using that
+        # offset for the rest of this client's life.
+        self._server_time_offset_ms: int | None = None
 
     @property
     def ws_base_url(self) -> str:
@@ -75,25 +82,41 @@ class BinanceClient:
         signature = hmac.new(self._api_secret.encode(), query.encode(), hashlib.sha256).hexdigest()
         return {**params, "signature": signature}
 
+    def _synced_timestamp_ms(self) -> int:
+        local_ms = int(time.time() * 1000)
+        return local_ms + self._server_time_offset_ms if self._server_time_offset_ms else local_ms
+
+    def sync_server_time(self) -> None:
+        """Recomputes this client's clock offset against Binance's server
+        time. Called automatically on a -1021 error; safe to call manually
+        too (e.g. right after container startup)."""
+        local_before = int(time.time() * 1000)
+        server_ms = self.get_server_time()
+        local_after = int(time.time() * 1000)
+        self._server_time_offset_ms = server_ms - (local_before + local_after) // 2
+
     def _request(
         self,
         method: str,
         path: str,
         params: dict[str, Any] | None = None,
         signed: bool = False,
+        _retried_after_resync: bool = False,
     ) -> Any:
-        params = {k: v for k, v in (params or {}).items() if v is not None}
+        base_params = {k: v for k, v in (params or {}).items() if v is not None}
         # Python's default float->str uses scientific notation for small
         # values (e.g. 8e-05), which Binance's API rejects outright
         # (code -1100, "Illegal characters found in parameter") — every
         # quantity/price sent here MUST be plain decimal notation.
-        params = {k: (_format_decimal(v) if isinstance(v, float) else v) for k, v in params.items()}
+        base_params = {k: (_format_decimal(v) if isinstance(v, float) else v) for k, v in base_params.items()}
+
+        request_params = dict(base_params)
         if signed:
-            params["timestamp"] = int(time.time() * 1000)
-            params["recvWindow"] = 5000
-            params = self._sign(params)
+            request_params["timestamp"] = self._synced_timestamp_ms()
+            request_params["recvWindow"] = 5000
+            request_params = self._sign(request_params)
         try:
-            response = self._http.request(method, path, params=params)
+            response = self._http.request(method, path, params=request_params)
         except httpx.RequestError as exc:
             raise BinanceConnectivityError(str(exc)) from exc
 
@@ -103,9 +126,15 @@ class BinanceClient:
                 payload = response.json()
             except ValueError:
                 pass
+            code = payload.get("code")
+
+            if signed and code == -1021 and not _retried_after_resync:
+                self.sync_server_time()
+                return self._request(method, path, base_params, signed=signed, _retried_after_resync=True)
+
             raise BinanceAPIError(
                 status_code=response.status_code,
-                code=payload.get("code"),
+                code=code,
                 message=payload.get("msg", response.text),
             )
         return response.json()

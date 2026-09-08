@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import { binanceApi, marketApi, settingsApi, symbolsApi } from "../api/endpoints";
-import type { Settings as SettingsType, SymbolInfo } from "../api/types";
-import { Badge, Button, Card } from "../components/ui";
+import type { BandwidthUsage, Settings as SettingsType, SymbolInfo } from "../api/types";
+import { Badge, Button, Card, Stat } from "../components/ui";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { BackfillProgress } from "../components/BackfillProgress";
 
@@ -108,15 +108,128 @@ function WizardStepHistoricalData() {
   );
 }
 
+const BANDWIDTH_POLL_MS = 5000;
+
+function NetworkUsagePanel({ settings, refreshSettings }: { settings: SettingsType; refreshSettings: () => void }) {
+  const [usage, setUsage] = useState<BandwidthUsage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let stopped = false;
+    async function poll() {
+      try {
+        const result = await marketApi.bandwidth();
+        if (!stopped) {
+          setUsage(result);
+          setError(null);
+        }
+      } catch (e: any) {
+        if (!stopped) setError(e.message);
+      }
+    }
+    poll();
+    const id = setInterval(poll, BANDWIDTH_POLL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  async function toggleAllTimeframes() {
+    await settingsApi.updateNetwork({ stream_all_timeframes: !settings.stream_all_timeframes });
+    refreshSettings();
+  }
+
+  async function setDepthSpeed(ms: number) {
+    await settingsApi.updateNetwork({ orderbook_update_speed_ms: ms });
+    refreshSettings();
+  }
+
+  const categoryLabels: Record<string, string> = {
+    ticker: "Precio (ticker)",
+    orderbook: "Profundidad de mercado (order book)",
+    klines: "Velas (klines)",
+  };
+
+  return (
+    <Card title="Uso de red (WebSocket de Binance)">
+      <p className="text-sm text-slate-400 mb-4">
+        Medido en vivo, no estimado — se actualiza cada {BANDWIDTH_POLL_MS / 1000}s con el minuto más reciente ya
+        completo.
+      </p>
+      {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
+      {!usage ? (
+        <p className="text-sm text-slate-500">Midiendo...</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+            <Stat label="Total ahora" value={`${usage.total_kb_per_sec.toFixed(2)} KB/s`} />
+            <Stat label="Estimado por hora" value={`${usage.estimated_mb_per_hour.toFixed(1)} MB/h`} />
+            <Stat label="Símbolos activos" value={usage.selected_symbols_count} />
+            <Stat label="Streams abiertos" value={usage.total_streams} />
+          </div>
+          <div className="space-y-2 mb-4">
+            {Object.entries(usage.categories).map(([category, stats]) => (
+              <div key={category} className="flex items-center justify-between bg-slate-800/50 rounded px-3 py-2 text-sm">
+                <span>{categoryLabels[category] ?? category}</span>
+                <span className="text-slate-400">{stats.kb_per_sec.toFixed(2)} KB/s</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="border-t border-slate-800 pt-4 space-y-4">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <span className="text-sm">Transmitir todos los timeframes (1m a 1d)</span>
+            <Badge tone={settings.stream_all_timeframes ? "warn" : "good"}>
+              {settings.stream_all_timeframes ? "SÍ (más tráfico)" : "NO (solo 1h y 5m)"}
+            </Badge>
+            <Button variant="ghost" onClick={toggleAllTimeframes}>
+              {settings.stream_all_timeframes ? "Reducir a lo esencial" : "Activar todos"}
+            </Button>
+          </div>
+          <p className="text-xs text-slate-500">
+            El motor solo necesita 1h (régimen) y 5m (scalping) para operar. Activar todos los timeframes sirve para
+            ver gráficos en vivo en cualquier timeframe en Market, pero multiplica el tráfico de velas por ~4.
+          </p>
+        </div>
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <span className="text-sm">Velocidad del order book</span>
+            <Badge tone={settings.orderbook_update_speed_ms === 100 ? "warn" : "good"}>
+              {settings.orderbook_update_speed_ms}ms
+            </Badge>
+            <Button variant="ghost" onClick={() => setDepthSpeed(settings.orderbook_update_speed_ms === 100 ? 1000 : 100)}>
+              Cambiar a {settings.orderbook_update_speed_ms === 100 ? "1000ms" : "100ms"}
+            </Button>
+          </div>
+          <p className="text-xs text-slate-500">
+            100ms = 10 actualizaciones por segundo por símbolo (mucho más tráfico); 1000ms = 1 por segundo. El motor
+            solo usa esto para estimar el spread, no necesita más velocidad que 1s.
+          </p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function SettingsPage() {
   const { settings, refreshSettings } = useOutletContext<{ settings: SettingsType | null; refreshSettings: () => void }>();
-  const [tab, setTab] = useState<"wizard" | "risk" | "mode">(settings?.wizard_completed ? "risk" : "wizard");
+  const [tab, setTab] = useState<"wizard" | "risk" | "mode" | "auto" | "network">(settings?.wizard_completed ? "risk" : "wizard");
   const [risk, setRisk] = useState<Partial<SettingsType>>({});
   const [showLiveConfirm, setShowLiveConfirm] = useState(false);
   const [connectivity, setConnectivity] = useState<any>(null);
+  const [autoSelectMaxSymbols, setAutoSelectMaxSymbols] = useState(1);
+  const [autoSelectMinVolume, setAutoSelectMinVolume] = useState(5_000_000);
 
   useEffect(() => {
-    if (settings) setRisk(settings);
+    if (settings) {
+      setRisk(settings);
+      setAutoSelectMaxSymbols(settings.auto_select_max_symbols);
+      setAutoSelectMinVolume(settings.auto_select_min_volume_usdt);
+    }
   }, [settings]);
 
   if (!settings) return null;
@@ -139,6 +252,17 @@ export function SettingsPage() {
 
   async function testConn() {
     setConnectivity(await binanceApi.testConnectivity());
+  }
+
+  async function toggleAutoSelect() {
+    await settingsApi.updateAutoSelect({ enabled: !settings!.auto_select_symbols_enabled });
+    refreshSettings();
+  }
+
+  async function saveAutoSelectParams() {
+    await settingsApi.updateAutoSelect({ max_symbols: autoSelectMaxSymbols, min_volume_usdt: autoSelectMinVolume });
+    refreshSettings();
+    alert("Parámetros de selección automática guardados");
   }
 
   async function changeMode(mode: string, phrase?: string) {
@@ -165,6 +289,12 @@ export function SettingsPage() {
         </button>
         <button onClick={() => setTab("mode")} className={`px-3 py-1.5 rounded text-sm ${tab === "mode" ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-400"}`}>
           Modo de operación
+        </button>
+        <button onClick={() => setTab("auto")} className={`px-3 py-1.5 rounded text-sm ${tab === "auto" ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-400"}`}>
+          Selección automática
+        </button>
+        <button onClick={() => setTab("network")} className={`px-3 py-1.5 rounded text-sm ${tab === "network" ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-400"}`}>
+          Red
         </button>
       </div>
 
@@ -275,6 +405,59 @@ export function SettingsPage() {
           {!settings.wizard_completed && <p className="text-amber-400 text-sm mt-3">Completar el asistente antes de activar LIVE.</p>}
         </Card>
       )}
+
+      {tab === "auto" && (
+        <Card title="Selección automática de símbolos">
+          <p className="text-sm text-slate-400 mb-4">
+            Cuando está activada, la herramienta elige sola qué pares USDT analizar y operar, en vez de elegirlos a
+            mano en Market: cada ~15 minutos ordena todos los pares líquidos por cuánto se movieron en las últimas 24h
+            y selecciona los más activos. Nunca toca un símbolo que hayas seleccionado manualmente.
+          </p>
+          <div className="flex items-center gap-3 mb-4">
+            <span className="text-sm">Estado:</span>
+            <Badge tone={settings.auto_select_symbols_enabled ? "good" : "neutral"}>
+              {settings.auto_select_symbols_enabled ? "ACTIVADA" : "DESACTIVADA"}
+            </Badge>
+            <Button variant={settings.auto_select_symbols_enabled ? "danger" : "success"} onClick={toggleAutoSelect}>
+              {settings.auto_select_symbols_enabled ? "Desactivar" : "Activar"}
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-4 max-w-md">
+            <div>
+              <label className="text-xs text-slate-500">Cantidad máxima de símbolos</label>
+              <input
+                type="number"
+                min={1}
+                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm"
+                value={autoSelectMaxSymbols}
+                onChange={(e) => setAutoSelectMaxSymbols(Number(e.target.value))}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Volumen mínimo 24h (USDT)</label>
+              <input
+                type="number"
+                min={0}
+                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm"
+                value={autoSelectMinVolume}
+                onChange={(e) => setAutoSelectMinVolume(Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <Button className="mt-4" onClick={saveAutoSelectParams}>
+            Guardar
+          </Button>
+          {autoSelectMaxSymbols > 1 && (
+            <p className="text-amber-400 text-xs mt-3">
+              Con el capital real actual, operar varios símbolos a la vez puede dejar cada posición al límite del
+              mínimo de Binance (~US$5 por orden) o directamente por debajo. Si el capital es chico, conviene dejarlo
+              en 1.
+            </p>
+          )}
+        </Card>
+      )}
+
+      {tab === "network" && <NetworkUsagePanel settings={settings} refreshSettings={refreshSettings} />}
 
       {showLiveConfirm && (
         <ConfirmDialog

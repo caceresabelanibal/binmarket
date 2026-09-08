@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -8,10 +10,29 @@ from app.core.binance_factory import get_binance_client_for_mode
 from app.core.deps import get_app_settings, get_current_user, get_db
 from binmarket_shared.binance.client import BinanceClient
 from binmarket_shared.binance.errors import BinanceAPIError, BinanceConnectivityError
+from binmarket_shared.binance.valuation import compute_account_total_value
 from binmarket_shared.config import settings as env_settings
-from binmarket_shared.db.models import AppSettings, User
+from binmarket_shared.db.models import AppSettings, RealAccountSnapshot, User
 
 router = APIRouter(prefix="/api/binance", tags=["binance"])
+
+
+class RealAccountHistoryEntry(BaseModel):
+    id: int
+    taken_at: datetime
+    total_usdt: float
+    total_ars: float | None
+    usdt_ars_rate: float | None
+
+    class Config:
+        from_attributes = True
+
+
+class RealAccountHistoryResponse(BaseModel):
+    items: list[RealAccountHistoryEntry]
+    total: int
+    page: int
+    page_size: int
 
 
 class ConnectivityResponse(BaseModel):
@@ -71,85 +92,26 @@ def account_total_value(_: User = Depends(get_current_user)) -> dict:
     """
     client = BinanceClient(env_settings.binance_api_key, env_settings.binance_api_secret, environment="production")
     try:
-        try:
-            account = client.get_account()
-        except (BinanceAPIError, BinanceConnectivityError) as exc:
-            return {"error": str(exc)}
-
-        holdings = [
-            (b["asset"], float(b["free"]) + float(b["locked"]))
-            for b in account.get("balances", [])
-            if float(b["free"]) + float(b["locked"]) > 0
-        ]
-
-        # ARS only exists on Binance as a QUOTE currency (USDTARS, BTCARS,
-        # ...), never as a base pair like "ARSUSDT" — so a fiat ARS balance
-        # has to be converted via the inverse of USDTARS, not looked up the
-        # same way a crypto asset is. Fetch it once, up front, since both the
-        # per-asset valuation below and the final USDT->ARS total need it.
-        usdt_ars_rate: float | None = None
-        usdt_ars_error: str | None = None
-        try:
-            ars_ticker = client.get_ticker_24hr("USDTARS")
-            usdt_ars_rate = float(ars_ticker["lastPrice"])
-        except (BinanceAPIError, BinanceConnectivityError) as exc:
-            usdt_ars_error = str(exc)
-
-        price_cache: dict[str, float] = {}
-
-        def usdt_price(asset: str) -> float | None:
-            if asset == "USDT":
-                return 1.0
-            if asset == "ARS":
-                return (1 / usdt_ars_rate) if usdt_ars_rate else None
-            if asset in price_cache:
-                return price_cache[asset]
-            try:
-                ticker = client.get_ticker_24hr(f"{asset}USDT")
-                price_cache[asset] = float(ticker["lastPrice"])
-                return price_cache[asset]
-            except (BinanceAPIError, BinanceConnectivityError):
-                pass
-            try:
-                via_btc = client.get_ticker_24hr(f"{asset}BTC")
-                btc_price = usdt_price("BTC")
-                if btc_price is not None:
-                    price_cache[asset] = float(via_btc["lastPrice"]) * btc_price
-                    return price_cache[asset]
-            except (BinanceAPIError, BinanceConnectivityError):
-                pass
-            return None
-
-        breakdown: list[dict] = []
-        unvalued: list[dict] = []
-        total_usdt = 0.0
-        for asset, amount in holdings:
-            price = usdt_price(asset)
-            if price is None:
-                unvalued.append({"asset": asset, "amount": amount})
-                continue
-            value_usdt = amount * price
-            total_usdt += value_usdt
-            breakdown.append({"asset": asset, "amount": amount, "price_usdt": price, "value_usdt": value_usdt})
-        breakdown.sort(key=lambda x: x["value_usdt"], reverse=True)
-
-        if usdt_ars_rate is None:
-            return {
-                "error": f"No se pudo obtener la cotización USDT/ARS: {usdt_ars_error}",
-                "total_usdt": total_usdt,
-                "breakdown": breakdown,
-                "unvalued_assets": unvalued,
-            }
-
-        return {
-            "total_usdt": total_usdt,
-            "total_ars": total_usdt * usdt_ars_rate,
-            "usdt_ars_rate": usdt_ars_rate,
-            "breakdown": breakdown,
-            "unvalued_assets": unvalued,
-        }
+        return compute_account_total_value(client)
     finally:
         client.close()
+
+
+@router.get("/account/total-value/history", response_model=RealAccountHistoryResponse)
+def account_total_value_history(
+    page: int = 1, page_size: int = 10,
+    db: Session = Depends(get_db), _: User = Depends(get_current_user),
+) -> RealAccountHistoryResponse:
+    """Paginated history of the "Capital real" card, newest first — snapshots
+    are taken every 6h by the trading-engine (see
+    trading-engine/app/snapshots.py::take_real_account_snapshot) and pruned
+    to the last 30 days there, independent of trading mode."""
+    page = max(page, 1)
+    page_size = max(1, min(page_size, 100))
+    query = db.query(RealAccountSnapshot).order_by(RealAccountSnapshot.taken_at.desc())
+    total = query.count()
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    return RealAccountHistoryResponse(items=rows, total=total, page=page, page_size=page_size)
 
 
 @router.get("/exchange-info")

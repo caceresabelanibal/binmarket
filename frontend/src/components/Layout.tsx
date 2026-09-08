@@ -9,14 +9,9 @@ import { useLiveFeed } from "../ws/useLiveFeed";
 
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard" },
-  { to: "/trading", label: "Trading" },
   { to: "/market", label: "Market" },
   { to: "/strategies", label: "Strategies" },
-  { to: "/backtesting", label: "Backtesting" },
-  { to: "/portfolio", label: "Portfolio" },
   { to: "/orders", label: "Orders" },
-  { to: "/positions", label: "Positions" },
-  { to: "/signals", label: "Signals" },
   { to: "/risk", label: "Risk" },
   { to: "/logs", label: "Logs" },
   { to: "/binance", label: "Binance" },

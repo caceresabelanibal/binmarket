@@ -6,15 +6,27 @@ docs/architecture.md for why a 6th service wasn't warranted.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-from binmarket_shared.db.models import AppSettings, BalanceSnapshot, PortfolioSnapshot, PositionStatus, TradingMode
+from binmarket_shared.binance.client import BinanceClient
+from binmarket_shared.binance.valuation import compute_account_total_value
+from binmarket_shared.config import settings as env_settings
+from binmarket_shared.db.models import (
+    AppSettings,
+    BalanceSnapshot,
+    PortfolioSnapshot,
+    PositionStatus,
+    RealAccountSnapshot,
+    TradingMode,
+)
 from binmarket_shared.trading.execution.base import ExecutionProvider
 from binmarket_shared.trading.risk.manager import RiskManager
 
 logger = logging.getLogger("binmarket.trading_engine.snapshots")
+
+REAL_ACCOUNT_HISTORY_RETENTION = timedelta(days=30)
 
 
 def take_portfolio_snapshot(db: Session, settings: AppSettings, provider: ExecutionProvider, current_price_fn) -> None:
@@ -70,3 +82,34 @@ def take_balance_snapshot(db: Session, settings: AppSettings, binance_client) ->
         free, locked = float(b["free"]), float(b["locked"])
         if free or locked:
             db.add(BalanceSnapshot(mode=settings.mode, asset=b["asset"], free=free, locked=locked))
+
+
+def take_real_account_snapshot(db: Session) -> None:
+    """History for the Dashboard's "Capital real" card - always the real
+    Binance **production** account, independent of the app's current
+    trading mode (PAPER/TESTNET/LIVE both still have a real account behind
+    them). Uses its own production-environment client rather than whatever
+    `binance_client` the tick loop built for the current mode, since that
+    one points at testnet outside LIVE mode.
+    """
+    client = BinanceClient(env_settings.binance_api_key, env_settings.binance_api_secret, environment="production")
+    try:
+        result = compute_account_total_value(client)
+    except Exception:
+        logger.exception("Failed to compute real account total value for history snapshot")
+        return
+    finally:
+        client.close()
+
+    if "error" in result and "total_usdt" not in result:
+        logger.warning("Skipping real account snapshot: %s", result.get("error"))
+        return
+
+    db.add(RealAccountSnapshot(
+        total_usdt=result.get("total_usdt", 0.0),
+        total_ars=result.get("total_ars"),
+        usdt_ars_rate=result.get("usdt_ars_rate"),
+    ))
+
+    cutoff = datetime.now(timezone.utc) - REAL_ACCOUNT_HISTORY_RETENTION
+    db.query(RealAccountSnapshot).filter(RealAccountSnapshot.taken_at < cutoff).delete()

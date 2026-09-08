@@ -148,8 +148,31 @@ class AppSettings(Base):
     emergency_stop_active: Mapped[bool] = mapped_column(Boolean, default=False)
     emergency_stop_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Set to "now" whenever a human clears Emergency Stop - the moment they
+    # explicitly acknowledge a losing streak and choose to resume. Positions
+    # closed *before* this timestamp no longer count toward
+    # consecutive_losing_trades(): without this, clearing the stop and
+    # turning the bot back on could never actually stick, because the very
+    # next periodic safety check re-reads the same already-acknowledged
+    # streak and re-trips immediately, before a single new trade could ever
+    # happen to break it. NULL means "never cleared" - every closed position
+    # counts, the original behavior.
+    losing_streak_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     wizard_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     wizard_step: Mapped[int] = mapped_column(Integer, default=1)
+
+    auto_select_symbols_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_select_max_symbols: Mapped[int] = mapped_column(Integer, default=1)
+    auto_select_min_volume_usdt: Mapped[float] = mapped_column(Float, default=5_000_000.0)
+
+    # Network usage controls (market-data's Binance WebSocket subscriptions).
+    # Off by default: only stream the 1h (regime) + 5m (scalping) timeframes
+    # instead of all 8, and the order-book depth stream at 1s instead of
+    # 100ms — the single biggest bandwidth cut, since 100ms means 10
+    # messages/sec per symbol just for the top of book.
+    stream_all_timeframes: Mapped[bool] = mapped_column(Boolean, default=False)
+    orderbook_update_speed_ms: Mapped[int] = mapped_column(Integer, default=1000)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -167,6 +190,7 @@ class Symbol(Base, TimestampMixin):
 
     is_selected: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_favorite: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_auto_selected: Mapped[bool] = mapped_column(Boolean, default=False)
 
     price_tick_size: Mapped[float] = mapped_column(Float, default=0.0)
     lot_step_size: Mapped[float] = mapped_column(Float, default=0.0)
@@ -212,7 +236,10 @@ class Signal(Base):
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     timeframe: Mapped[str] = mapped_column(String(8))
     strategy_name: Mapped[str] = mapped_column(String(64))
-    regime: Mapped[str] = mapped_column(String(32), default="UNKNOWN")
+    # "STRONG_DOWNTREND/EXTREME_VOLATILITY" (RegimeReading.label's longest
+    # possible value) is 36 chars — 64 leaves real headroom, not just enough
+    # to fit today's exact strings.
+    regime: Mapped[str] = mapped_column(String(64), default="UNKNOWN")
 
     action: Mapped[SignalAction] = mapped_column(Enum(SignalAction, name="signal_action"))
 
@@ -413,6 +440,21 @@ class BalanceSnapshot(Base):
     free: Mapped[float] = mapped_column(Float)
     locked: Mapped[float] = mapped_column(Float)
     usd_value: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class RealAccountSnapshot(Base):
+    """History for the Dashboard's "Capital real" card - the user's actual
+    Binance spot wallet value, independent of trading mode. Taken every 6h
+    by the trading-engine and pruned to the last 30 days (see
+    trading-engine/app/snapshots.py::take_real_account_snapshot)."""
+
+    __tablename__ = "real_account_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    total_usdt: Mapped[float] = mapped_column(Float)
+    total_ars: Mapped[float | None] = mapped_column(Float, nullable=True)
+    usdt_ars_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class BotEvent(Base):

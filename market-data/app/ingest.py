@@ -1,12 +1,19 @@
 """Live market data ingestion (section 8 of the spec).
 
 Subscribes to Binance's combined WebSocket stream for every currently
-selected symbol (kline for every configured timeframe, rolling 24h ticker,
-and top-of-book depth), writes closed candles to Postgres, and caches the
-latest ticker/orderbook in Redis for the backend/trading-engine to read
-without hitting Binance themselves. Restarts its own subscription whenever
-the selected-symbol list changes, and always reconnects with backoff on
-disconnect (via `BinanceWebSocketClient`) rather than silently going stale.
+selected symbol, writes closed candles to Postgres, and caches the latest
+ticker/orderbook in Redis for the backend/trading-engine to read without
+hitting Binance themselves. Restarts its own subscription whenever the
+selected-symbol list *or* the network-usage settings change, and always
+reconnects with backoff on disconnect (via `BinanceWebSocketClient`) rather
+than silently going stale.
+
+Network usage is deliberately kept small by default: only the timeframes
+the engine actually trades on are streamed (not all 8), and the order-book
+depth stream runs at 1s instead of Binance's 100ms option — that alone is a
+10x cut in the single highest-volume stream per symbol. Both are
+user-configurable (Settings → Red) for anyone who wants full live multi-
+timeframe charts badly enough to pay the extra bandwidth for it.
 """
 from __future__ import annotations
 
@@ -21,32 +28,42 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from binmarket_shared.binance.ws import BinanceWebSocketClient
 from binmarket_shared.constants import TIMEFRAMES
 from binmarket_shared.db.base import session_scope
-from binmarket_shared.db.models import Candle, Symbol
+from binmarket_shared.db.models import AppSettings, Candle, Symbol
 from binmarket_shared.redis_keys import (
+    BANDWIDTH_BUCKET_TTL_SECONDS,
+    bandwidth_bucket_key,
     orderbook_top_key,
     PRICE_UPDATES_CHANNEL,
     ticker_key,
     ws_connection_status_key,
 )
+from binmarket_shared.trading.engine_loop import REGIME_TIMEFRAME
+from binmarket_shared.trading.strategies.scalping import ScalpingStrategy
 
 logger = logging.getLogger("binmarket.market_data.ingest")
 
 SYMBOL_POLL_INTERVAL_SECONDS = 20
+ESSENTIAL_TIMEFRAMES = sorted({REGIME_TIMEFRAME, ScalpingStrategy.preferred_timeframe}, key=TIMEFRAMES.index)
 
 
-def _selected_symbols() -> list[str]:
+def _selected_symbols_and_network_settings() -> tuple[list[str], bool, int]:
     with session_scope() as db:
         rows = db.execute(select(Symbol.symbol).where(Symbol.is_selected.is_(True))).scalars().all()
-        return sorted(rows)
+        settings = db.get(AppSettings, 1)
+        all_timeframes = settings.stream_all_timeframes if settings else False
+        depth_speed_ms = settings.orderbook_update_speed_ms if settings else 1000
+        return sorted(rows), all_timeframes, depth_speed_ms
 
 
-def _build_streams(symbols: list[str]) -> list[str]:
+def _build_streams(symbols: list[str], all_timeframes: bool, depth_speed_ms: int) -> list[str]:
+    timeframes = TIMEFRAMES if all_timeframes else ESSENTIAL_TIMEFRAMES
+    depth_suffix = "@100ms" if depth_speed_ms == 100 else ""
     streams: list[str] = []
     for symbol in symbols:
         s = symbol.lower()
         streams.append(f"{s}@ticker")
-        streams.append(f"{s}@depth5@100ms")
-        for tf in TIMEFRAMES:
+        streams.append(f"{s}@depth5{depth_suffix}")
+        for tf in timeframes:
             streams.append(f"{s}@kline_{tf}")
     return streams
 
@@ -68,9 +85,33 @@ def _upsert_candle(symbol: str, timeframe: str, k: dict) -> None:
         db.execute(stmt)
 
 
-async def _handle_message(redis, message: dict) -> None:
+def _is_depth_payload(message: dict) -> bool:
+    # Binance's partial book depth stream payload is {"lastUpdateId": ..,
+    # "bids": [...], "asks": [...]} - no "e"/"s" field at all, so this is
+    # the only reliable way to recognize it.
+    return "bids" in message and "asks" in message
+
+
+async def _track_bandwidth(redis, event_type: str, message: dict, num_bytes: int) -> None:
+    if event_type == "kline":
+        category = "klines"
+    elif event_type == "24hrTicker":
+        category = "ticker"
+    elif _is_depth_payload(message):
+        category = "orderbook"
+    else:
+        return
+    bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+    key = bandwidth_bucket_key(category, bucket)
+    await redis.incrby(key, num_bytes)
+    await redis.expire(key, BANDWIDTH_BUCKET_TTL_SECONDS)
+
+
+async def _handle_message(redis, message: dict, num_bytes: int, stream_name: str | None) -> None:
     event_type = message.get("e")
     try:
+        await _track_bandwidth(redis, event_type, message, num_bytes)
+
         if event_type == "kline":
             k = message["k"]
             symbol = message["s"]
@@ -91,10 +132,13 @@ async def _handle_message(redis, message: dict) -> None:
             await redis.set(ticker_key(symbol), json.dumps(payload))
             await redis.publish(PRICE_UPDATES_CHANNEL, json.dumps({"symbol": symbol, "price": payload["price"]}))
 
-        elif "b" in message and "a" in message and "s" in message:
-            # partial depth stream payload
-            symbol = message["s"]
-            bids, asks = message.get("b", []), message.get("a", [])
+        elif _is_depth_payload(message):
+            # Partial depth payloads carry no symbol of their own - the
+            # combined-stream name ("btcusdt@depth5") is the only place it's identifiable.
+            if not stream_name:
+                return
+            symbol = stream_name.split("@")[0].upper()
+            bids, asks = message.get("bids", []), message.get("asks", [])
             if bids and asks:
                 await redis.set(orderbook_top_key(symbol), json.dumps({"bid": float(bids[0][0]), "ask": float(asks[0][0])}))
     except Exception:
@@ -104,7 +148,7 @@ async def _handle_message(redis, message: dict) -> None:
 async def run_ingestion(redis, environment: str, stop_event: asyncio.Event) -> None:
     current_client: BinanceWebSocketClient | None = None
     current_task: asyncio.Task | None = None
-    current_symbols: list[str] = []
+    current_key: tuple[tuple[str, ...], bool, int] | None = None
 
     async def on_status_change(status: str) -> None:
         await redis.set(ws_connection_status_key(), status)
@@ -112,23 +156,30 @@ async def run_ingestion(redis, environment: str, stop_event: asyncio.Event) -> N
             logger.warning("Market data WebSocket disconnected; signals will be paused until it reconnects")
 
     while not stop_event.is_set():
-        symbols = _selected_symbols()
-        if symbols != current_symbols:
+        symbols, all_timeframes, depth_speed_ms = _selected_symbols_and_network_settings()
+        key = (tuple(symbols), all_timeframes, depth_speed_ms)
+        if key != current_key:
             if current_client is not None:
                 current_client.stop()
                 if current_task is not None:
                     current_task.cancel()
             if symbols:
-                streams = _build_streams(symbols)
-                logger.info("Subscribing to %d streams for symbols: %s", len(streams), symbols)
+                streams = _build_streams(symbols, all_timeframes, depth_speed_ms)
+                logger.info(
+                    "Subscribing to %d streams for symbols: %s (all_timeframes=%s, depth=%sms)",
+                    len(streams), symbols, all_timeframes, depth_speed_ms,
+                )
                 current_client = BinanceWebSocketClient(
-                    streams, lambda msg: _handle_message(redis, msg), environment, on_status_change,
+                    streams,
+                    lambda msg, n, stream: _handle_message(redis, msg, n, stream),
+                    environment,
+                    on_status_change,
                 )
                 current_task = asyncio.create_task(current_client.run())
             else:
                 current_client, current_task = None, None
                 logger.info("No symbols selected yet; market-data is idle")
-            current_symbols = symbols
+            current_key = key
 
         await asyncio.sleep(SYMBOL_POLL_INTERVAL_SECONDS)
 

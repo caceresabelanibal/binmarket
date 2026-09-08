@@ -47,6 +47,12 @@ logger = logging.getLogger("binmarket.engine_loop")
 DEFAULT_STRATEGY_PRIORITY = list(STRATEGY_REGISTRY.keys())
 MAX_BARS_LOADED = 300
 
+# Every strategy is judged against the same "is this a good environment to
+# trade in" read, computed on this timeframe, regardless of which timeframe
+# the winning strategy actually trades on (`strategy.preferred_timeframe`) —
+# see BaseStrategy.preferred_timeframe for why.
+REGIME_TIMEFRAME = "1h"
+
 
 def load_candle_dataframe(db: Session, symbol: str, timeframe: str, limit: int = MAX_BARS_LOADED) -> pd.DataFrame:
     stmt = (
@@ -71,23 +77,34 @@ def load_candle_dataframe(db: Session, symbol: str, timeframe: str, limit: int =
     )
 
 
-def _read_ticker_price(redis_client, symbol: str, fallback: float) -> tuple[float, float | None, float | None]:
+def _read_ticker_price(redis_client, symbol: str, fallback: float) -> tuple[float, float | None, float | None, bool]:
+    """Returns (price, best_bid, best_ask, is_live). `is_live` is False
+    whenever `price` had to fall back to `fallback` (the last CLOSED
+    candle's close, which for market-data's own bootstrap flow is often
+    hours old) instead of a real cached WebSocket ticker tick - real
+    incident: a freshly auto-selected, fast-moving micro-cap had no live
+    ticker cached yet, so a stale hour-old close (33% away from the real
+    market) got used as "current price" to size a brand new entry's
+    stop-loss/take-profit, putting the stop on the wrong side of the real
+    fill. Callers must never open a *new* position when this is False.
+    """
     if redis_client is None:
-        return fallback, None, None
+        return fallback, None, None, False
     try:
         import json
 
         raw = redis_client.get(ticker_key(symbol))
+        is_live = raw is not None
         price = float(json.loads(raw)["price"]) if raw else fallback
         book_raw = redis_client.get(orderbook_top_key(symbol))
         bid = ask = None
         if book_raw:
             book = json.loads(book_raw)
             bid, ask = float(book["bid"]), float(book["ask"])
-        return price, bid, ask
+        return price, bid, ask, is_live
     except Exception:
         logger.exception("Failed to read cached ticker for %s, using last candle close", symbol)
-        return fallback, None, None
+        return fallback, None, None, False
 
 
 def _symbol_filters(db: Session, symbol: str) -> SymbolFilters | None:
@@ -100,20 +117,19 @@ def _symbol_filters(db: Session, symbol: str) -> SymbolFilters | None:
 def process_symbol_tick(
     db: Session,
     symbol: str,
-    timeframe: str,
     settings: AppSettings,
     execution_provider: ExecutionProvider,
     redis_client=None,
     strategy_priority: list[str] | None = None,
 ) -> Signal | None:
-    df = load_candle_dataframe(db, symbol, timeframe)
-    if len(df) < 55:
+    regime_df = load_candle_dataframe(db, symbol, REGIME_TIMEFRAME)
+    if len(regime_df) < 55:
         return None
 
     mode = settings.mode
-    last_close = float(df["close"].iloc[-1])
-    current_price, best_bid, best_ask = _read_ticker_price(redis_client, symbol, last_close)
-    regime = classify_regime(df)
+    last_close = float(regime_df["close"].iloc[-1])
+    current_price, best_bid, best_ask, price_is_live = _read_ticker_price(redis_client, symbol, last_close)
+    regime = classify_regime(regime_df)
 
     risk_manager = RiskManager(db, settings)
     available_capital = execution_provider.get_available_balance("USDT")
@@ -128,13 +144,33 @@ def process_symbol_tick(
 
     if open_position is not None:
         return _handle_open_position(
-            db, open_position, df, symbol, timeframe, regime, current_price, settings, order_manager, mode, redis_client,
+            db, open_position, symbol, regime, current_price, settings, order_manager, mode, redis_client,
         )
+
+    if not price_is_live:
+        # No cached WebSocket ticker for this symbol yet (common right after
+        # it's freshly selected, before market-data's subscription catches
+        # up) - `current_price` fell back to the last CLOSED candle, which
+        # can be hours old and wildly different from the real market for a
+        # fast-moving symbol. Sizing a brand new entry - and its stop-loss/
+        # take-profit - off that stale a reference is exactly what put a
+        # stop-loss on the wrong side of the real fill for a real position.
+        # An already-open position still gets monitored on the best price
+        # available (never checking it at all would be worse); only new
+        # entries are blocked here.
+        signal = Signal(
+            symbol=symbol, timeframe=REGIME_TIMEFRAME, strategy_name="none", regime=regime.label,
+            action=SignalAction.NO_TRADE,
+            reasons=["Sin precio en vivo confiable todavía para este símbolo (ticker recién seleccionado) — no se abren posiciones nuevas hasta tener datos en tiempo real"],
+        )
+        db.add(signal)
+        db.flush()
+        return signal
 
     strategies = eligible_strategies(regime, strategy_priority or DEFAULT_STRATEGY_PRIORITY)
     if not strategies:
         signal = Signal(
-            symbol=symbol, timeframe=timeframe, strategy_name="none", regime=regime.label,
+            symbol=symbol, timeframe=REGIME_TIMEFRAME, strategy_name="none", regime=regime.label,
             action=SignalAction.NO_TRADE, reasons=[f"Ninguna estrategia habilitada es elegible para el régimen {regime.label}"],
         )
         db.add(signal)
@@ -142,8 +178,24 @@ def process_symbol_tick(
         return signal
 
     strategy = strategies[0]
+    entry_df = regime_df if strategy.preferred_timeframe == REGIME_TIMEFRAME else load_candle_dataframe(
+        db, symbol, strategy.preferred_timeframe
+    )
+    if len(entry_df) < strategy.min_bars_required:
+        signal = Signal(
+            symbol=symbol, timeframe=strategy.preferred_timeframe, strategy_name=strategy.name, regime=regime.label,
+            action=SignalAction.NO_TRADE,
+            reasons=[
+                f"Faltan datos históricos en {strategy.preferred_timeframe} para {symbol} "
+                f"({len(entry_df)}/{strategy.min_bars_required} velas) — descargar histórico en Market"
+            ],
+        )
+        db.add(signal)
+        db.flush()
+        return signal
+
     ctx = StrategyContext(
-        df=df, symbol=symbol, timeframe=timeframe, regime=regime, current_price=current_price,
+        df=entry_df, symbol=symbol, timeframe=strategy.preferred_timeframe, regime=regime, current_price=current_price,
         best_bid=best_bid, best_ask=best_ask, available_capital=available_capital,
         current_total_exposure_value=current_exposure, max_total_exposure_pct=settings.max_total_exposure_pct,
         max_position_size_pct=settings.max_position_size_pct, risk_per_trade_pct=settings.max_risk_per_trade_pct,
@@ -155,7 +207,7 @@ def process_symbol_tick(
     ai_recommendation = RuleBasedAdvisor().recommend(ctx, strategy_signal)
 
     signal = Signal(
-        symbol=symbol, timeframe=timeframe, strategy_name=strategy.name, regime=regime.label,
+        symbol=symbol, timeframe=strategy.preferred_timeframe, strategy_name=strategy.name, regime=regime.label,
         action=SignalAction(strategy_signal.action),
         opportunity_score=strategy_signal.scores.opportunity_score,
         trend_score=strategy_signal.scores.trend_score, momentum_score=strategy_signal.scores.momentum_score,
@@ -205,9 +257,7 @@ def process_symbol_tick(
 def _handle_open_position(
     db: Session,
     position: Position,
-    df: pd.DataFrame,
     symbol: str,
-    timeframe: str,
     regime,
     current_price: float,
     settings: AppSettings,
@@ -229,27 +279,31 @@ def _handle_open_position(
             exit_reason = f"Trailing stop alcanzado ({trailing_level:.4f})"
 
     strategy = get_strategy(position.strategy_name) if position.strategy_name in STRATEGY_REGISTRY else None
+    monitoring_timeframe = strategy.preferred_timeframe if strategy else REGIME_TIMEFRAME
+
     if exit_reason is None and strategy is not None:
-        ctx = StrategyContext(
-            df=df, symbol=symbol, timeframe=timeframe, regime=regime, current_price=current_price,
-            best_bid=current_price, best_ask=current_price, available_capital=0.0,
-            current_total_exposure_value=0.0, max_total_exposure_pct=settings.max_total_exposure_pct,
-            max_position_size_pct=settings.max_position_size_pct, risk_per_trade_pct=settings.max_risk_per_trade_pct,
-            taker_fee_pct=settings.taker_fee_pct, default_slippage_pct=settings.default_slippage_pct,
-            min_expected_net_profit_pct=settings.min_expected_net_profit_pct,
-            open_position=OpenPositionView(
-                entry_price=position.entry_price, quantity=position.quantity, stop_loss=position.stop_loss,
-                take_profit=position.take_profit, trailing_stop_pct=position.trailing_stop_pct,
-                highest_price_since_entry=position.highest_price_since_entry, opened_at=position.opened_at,
-            ),
-        )
-        should_exit, reason = strategy.should_exit_on_deterioration(ctx)
-        if should_exit:
-            exit_reason = reason
+        df = load_candle_dataframe(db, symbol, strategy.preferred_timeframe)
+        if len(df) >= strategy.min_bars_required:
+            ctx = StrategyContext(
+                df=df, symbol=symbol, timeframe=strategy.preferred_timeframe, regime=regime, current_price=current_price,
+                best_bid=current_price, best_ask=current_price, available_capital=0.0,
+                current_total_exposure_value=0.0, max_total_exposure_pct=settings.max_total_exposure_pct,
+                max_position_size_pct=settings.max_position_size_pct, risk_per_trade_pct=settings.max_risk_per_trade_pct,
+                taker_fee_pct=settings.taker_fee_pct, default_slippage_pct=settings.default_slippage_pct,
+                min_expected_net_profit_pct=settings.min_expected_net_profit_pct,
+                open_position=OpenPositionView(
+                    entry_price=position.entry_price, quantity=position.quantity, stop_loss=position.stop_loss,
+                    take_profit=position.take_profit, trailing_stop_pct=position.trailing_stop_pct,
+                    highest_price_since_entry=position.highest_price_since_entry, opened_at=position.opened_at,
+                ),
+            )
+            should_exit, reason = strategy.should_exit_on_deterioration(ctx)
+            if should_exit:
+                exit_reason = reason
 
     action = SignalAction.SELL if exit_reason else SignalAction.HOLD
     signal = Signal(
-        symbol=symbol, timeframe=timeframe, strategy_name=position.strategy_name or "unknown", regime=regime.label,
+        symbol=symbol, timeframe=monitoring_timeframe, strategy_name=position.strategy_name or "unknown", regime=regime.label,
         action=action,
         reasons=[exit_reason] if exit_reason else ["Posición abierta en seguimiento; sin condición de salida todavía"],
     )

@@ -66,6 +66,29 @@ def calculate_position_size(
         if not ok:
             return PositionSizeResult(0.0, 0.0, risk_amount, notes, False, reason)
 
+        # Closing a position later nets out any commission paid in the base
+        # asset and floors the result to this same LOT_SIZE step - so the
+        # sell quantity is at best one step below what was bought here. And
+        # the worst-case price at which this position is actually meant to
+        # be sold isn't entry_price, it's stop_loss_price - that's the whole
+        # point of a stop-loss. A real production bug checked only "one step
+        # down, at entry_price", which barely passed at open (a razor-thin
+        # margin) and then failed for real the moment the position had to
+        # exit at its own (lower) stop-loss price, hitting -1013 NOTIONAL on
+        # every retry with the loss uncapped and growing. Require the
+        # position to still clear min_notional one step down, priced at its
+        # OWN stop-loss - i.e. survivable in the scenario it's designed for.
+        if symbol_filters.min_notional and symbol_filters.step_size:
+            worst_case_price = min(entry_price, stop_loss_price)
+            value_after_one_step_loss = (quantity - symbol_filters.step_size) * worst_case_price
+            if value_after_one_step_loss < symbol_filters.min_notional:
+                return PositionSizeResult(
+                    0.0, 0.0, risk_amount, notes, False,
+                    "quantity too close to min_notional - selling one lot step below this "
+                    "(as commission-netting requires) at the stop-loss price would fall under "
+                    "the exchange minimum, leaving no way to close this position if it loses",
+                )
+
     if quantity <= 0:
         return PositionSizeResult(0.0, 0.0, risk_amount, notes, False, "rounded quantity is zero")
 

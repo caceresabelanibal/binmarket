@@ -44,3 +44,14 @@ def heartbeat_key(service: str) -> str:
 
 
 HEARTBEAT_TTL_SECONDS = 30
+
+# --- Bandwidth accounting: per-category, per-minute byte counters, kept only
+# a few minutes (see BANDWIDTH_BUCKET_TTL_SECONDS) — this is a live rate
+# meter, not a historical log. Category is one of "ticker", "orderbook",
+# "klines". `minute_bucket` is a "YYYYmmddHHMM" string. --------------------
+def bandwidth_bucket_key(category: str, minute_bucket: str) -> str:
+    return f"binmarket:bandwidth:{category}:{minute_bucket}"
+
+
+BANDWIDTH_CATEGORIES = ["ticker", "orderbook", "klines"]
+BANDWIDTH_BUCKET_TTL_SECONDS = 5 * 60

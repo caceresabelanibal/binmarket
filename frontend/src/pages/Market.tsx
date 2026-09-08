@@ -149,7 +149,9 @@ export function Market() {
             return (
               <tr key={s.symbol} className="hover:bg-slate-800/40 cursor-pointer" onClick={() => setSelectedSymbol(s.symbol)}>
                 <td className="py-2 px-2">{s.symbol === selectedSymbol && <Badge tone="good">viendo</Badge>}</td>
-                <td className="py-2 px-2 font-medium">{s.symbol}</td>
+                <td className="py-2 px-2 font-medium">
+                  {s.symbol} {s.is_auto_selected && <Badge tone="warn">AUTO</Badge>}
+                </td>
                 <td className="py-2 px-2">{fmtUsd(livePrice, livePrice && livePrice < 1 ? 6 : 2)}</td>
                 <td className={`py-2 px-2 ${(s.price_change_pct_24h ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                   {fmtPct(s.price_change_pct_24h)}

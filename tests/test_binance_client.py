@@ -51,6 +51,49 @@ def test_create_order_sends_plain_decimal_quantity_not_scientific_notation():
 
 
 @respx.mock
+def test_clock_skew_triggers_resync_and_retries_once():
+    """Regression test: if the container's clock drifts ahead of Binance's
+    (code -1021), the client must resync against /api/v3/time and retry the
+    *same* signed request once with a corrected timestamp — not surface the
+    error to the caller, and not loop forever.
+    """
+    call_count = {"account": 0}
+
+    def account_handler(request: httpx.Request) -> httpx.Response:
+        call_count["account"] += 1
+        if call_count["account"] == 1:
+            return httpx.Response(400, json={"code": -1021, "msg": "Timestamp for this request was 1000ms ahead of the server's time."})
+        return httpx.Response(200, json={"balances": []})
+
+    respx.get("https://testnet.binance.vision/api/v3/time").mock(
+        return_value=httpx.Response(200, json={"serverTime": 1_700_000_000_000})
+    )
+    respx.get("https://testnet.binance.vision/api/v3/account").mock(side_effect=account_handler)
+
+    client = BinanceClient("key", "secret", environment="testnet")
+    result = client.get_account()
+
+    assert result == {"balances": []}
+    assert call_count["account"] == 2  # first attempt failed, second (resynced) succeeded
+    assert client._server_time_offset_ms is not None
+
+
+@respx.mock
+def test_clock_skew_does_not_retry_forever_if_still_failing():
+    respx.get("https://testnet.binance.vision/api/v3/time").mock(
+        return_value=httpx.Response(200, json={"serverTime": 1_700_000_000_000})
+    )
+    respx.get("https://testnet.binance.vision/api/v3/account").mock(
+        return_value=httpx.Response(400, json={"code": -1021, "msg": "still ahead"})
+    )
+
+    client = BinanceClient("key", "secret", environment="testnet")
+    with pytest.raises(BinanceAPIError) as exc_info:
+        client.get_account()
+    assert exc_info.value.code == -1021
+
+
+@respx.mock
 def test_ping_success():
     respx.get("https://testnet.binance.vision/api/v3/ping").mock(return_value=httpx.Response(200, json={}))
     client = BinanceClient("key", "secret", environment="testnet")

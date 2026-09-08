@@ -24,6 +24,7 @@ class SymbolResponse(BaseModel):
     status: str
     is_selected: bool
     is_favorite: bool
+    is_auto_selected: bool
     price_tick_size: float
     lot_step_size: float
     min_notional: float

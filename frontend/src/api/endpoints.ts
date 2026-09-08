@@ -1,6 +1,7 @@
 import { get, post, put } from "./client";
 import type {
   Backtest,
+  BandwidthUsage,
   BinanceAccount,
   BinanceTotalValue,
   BotEvent,
@@ -9,6 +10,7 @@ import type {
   Order,
   PortfolioSummary,
   Position,
+  RealAccountHistoryResponse,
   RiskEvent,
   RiskState,
   Settings,
@@ -33,6 +35,10 @@ export const settingsApi = {
   toggleBot: (enabled: boolean, reason?: string) => post<Settings>("/settings/bot/toggle", { enabled, reason }),
   updateWizard: (step?: number, completed?: boolean) => put<Settings>("/settings/wizard", { step, completed }),
   clearEmergencyStop: (note?: string) => post<Settings>("/settings/emergency-stop/clear", { note }),
+  updateAutoSelect: (payload: { enabled?: boolean; max_symbols?: number; min_volume_usdt?: number }) =>
+    put<Settings>("/settings/auto-select", payload),
+  updateNetwork: (payload: { stream_all_timeframes?: boolean; orderbook_update_speed_ms?: number }) =>
+    put<Settings>("/settings/network", payload),
 };
 
 export const binanceApi = {
@@ -42,6 +48,8 @@ export const binanceApi = {
     ),
   account: () => get<BinanceAccount>("/binance/account"),
   totalValue: () => get<BinanceTotalValue>("/binance/account/total-value"),
+  totalValueHistory: (page = 1, pageSize = 10) =>
+    get<RealAccountHistoryResponse>(`/binance/account/total-value/history?page=${page}&page_size=${pageSize}`),
   exchangeInfo: (symbol?: string) => get<any>(`/binance/exchange-info${symbol ? `?symbol=${symbol}` : ""}`),
 };
 
@@ -76,6 +84,7 @@ export const marketApi = {
   backfillJob: (jobId: string) => get<any>(`/market/backfill/jobs/${jobId}`),
   backfillQueueLength: () => get<{ pending_in_queue: number }>("/market/backfill/queue-length"),
   ticker: (symbol: string) => get<any>(`/market/ticker?symbol=${symbol}`),
+  bandwidth: () => get<BandwidthUsage>("/market/bandwidth"),
 };
 
 export const signalsApi = {

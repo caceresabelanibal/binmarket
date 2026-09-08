@@ -38,6 +38,11 @@ class SettingsResponse(BaseModel):
     emergency_stop_reason: str | None
     wizard_completed: bool
     wizard_step: int
+    auto_select_symbols_enabled: bool
+    auto_select_max_symbols: int
+    auto_select_min_volume_usdt: float
+    stream_all_timeframes: bool
+    orderbook_update_speed_ms: int
 
     class Config:
         from_attributes = True
@@ -75,6 +80,17 @@ class WizardUpdate(BaseModel):
 
 class EmergencyStopClearRequest(BaseModel):
     note: str | None = None
+
+
+class AutoSelectUpdate(BaseModel):
+    enabled: bool | None = None
+    max_symbols: int | None = None
+    min_volume_usdt: float | None = None
+
+
+class NetworkSettingsUpdate(BaseModel):
+    stream_all_timeframes: bool | None = None
+    orderbook_update_speed_ms: int | None = None
 
 
 def _settings_row(db: Session) -> AppSettings:
@@ -184,6 +200,38 @@ def clear_emergency_stop(
 ) -> AppSettings:
     row = _settings_row(db)
     RiskManager(db, row).clear_emergency_stop(user.username, payload.note)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.put("/auto-select", response_model=SettingsResponse)
+def update_auto_select(
+    payload: AutoSelectUpdate, db: Session = Depends(get_db), _: User = Depends(get_current_user)
+) -> AppSettings:
+    row = _settings_row(db)
+    if payload.enabled is not None:
+        row.auto_select_symbols_enabled = payload.enabled
+    if payload.max_symbols is not None:
+        row.auto_select_max_symbols = max(1, payload.max_symbols)
+    if payload.min_volume_usdt is not None:
+        row.auto_select_min_volume_usdt = max(0.0, payload.min_volume_usdt)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.put("/network", response_model=SettingsResponse)
+def update_network_settings(
+    payload: NetworkSettingsUpdate, db: Session = Depends(get_db), _: User = Depends(get_current_user)
+) -> AppSettings:
+    row = _settings_row(db)
+    if payload.stream_all_timeframes is not None:
+        row.stream_all_timeframes = payload.stream_all_timeframes
+    if payload.orderbook_update_speed_ms is not None:
+        if payload.orderbook_update_speed_ms not in (100, 1000):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "orderbook_update_speed_ms debe ser 100 o 1000")
+        row.orderbook_update_speed_ms = payload.orderbook_update_speed_ms
     db.commit()
     db.refresh(row)
     return row

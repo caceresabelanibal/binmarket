@@ -20,7 +20,7 @@ os.environ.setdefault("POSTGRES_PASSWORD", "binmarket")
 os.environ.setdefault("REDIS_URL", "redis://localhost:56379/0")
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from binmarket_shared.config import settings
@@ -40,11 +40,31 @@ def engine():
 @pytest.fixture()
 def db(engine):
     """Each test runs inside its own transaction, rolled back afterwards —
-    tests never see each other's data and never need manual cleanup."""
+    tests never see each other's data and never need manual cleanup.
+
+    Code under test is allowed to call `session.commit()` (some real code
+    paths do, correctly — e.g. a job that must be visible to another process
+    before it's queued). A plain `connection.begin()` would let that commit
+    end the *outer* transaction too, breaking isolation for the rest of the
+    test. The standard SQLAlchemy fix: run the outer transaction as a
+    SAVEPOINT and restart a fresh one every time the session's transaction
+    ends, so `session.commit()` only ever closes the savepoint, never the
+    connection's real transaction — see SQLAlchemy's "joining a session into
+    an external transaction" recipe.
+    """
     connection = engine.connect()
     transaction = connection.begin()
     SessionLocal = sessionmaker(bind=connection, future=True)
     session = SessionLocal()
+
+    nested = connection.begin_nested()
+
+    @event.listens_for(session, "after_transaction_end")
+    def _restart_savepoint(sess, trans):
+        nonlocal nested
+        if not nested.is_active:
+            nested = connection.begin_nested()
+
     try:
         yield session
     finally:

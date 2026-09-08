@@ -128,6 +128,43 @@ def test_a_single_win_breaks_the_losing_streak(db, app_settings):
     assert rm.consecutive_losing_trades(TradingMode.PAPER) == 1
 
 
+def test_clearing_emergency_stop_resets_the_losing_streak(db, app_settings):
+    """Regression test for a real production bug: a human clears Emergency
+    Stop after a real losing streak and turns the bot back on, but the very
+    next periodic safety check re-reads the same already-acknowledged
+    losses and re-trips instantly - the manual "encender" button could
+    never actually stick. Clearing the stop must reset what counts as "the
+    streak" to that moment, the same way a real circuit breaker's reset
+    switch starts fresh instead of re-tripping on the fault that's already
+    been dealt with.
+    """
+    app_settings.bot_enabled = True
+    app_settings.max_consecutive_losses = 3
+    for _ in range(3):
+        _closed_position(db, TradingMode.PAPER, realized_pnl=-10)
+    rm = RiskManager(db, app_settings)
+    assert rm.consecutive_losing_trades(TradingMode.PAPER) == 3
+
+    rm.clear_emergency_stop("admin")
+    assert rm.consecutive_losing_trades(TradingMode.PAPER) == 0
+
+    rm.run_periodic_safety_checks(TradingMode.PAPER, available_capital=10_000)
+    assert app_settings.emergency_stop_active is False  # did NOT instantly re-trip on old history
+
+
+def test_new_losses_after_a_reset_still_trip_the_breaker(db, app_settings):
+    # The reset only wipes the *old* streak - it's not a permanent bypass.
+    app_settings.bot_enabled = True
+    app_settings.max_consecutive_losses = 2
+    rm = RiskManager(db, app_settings)
+    rm.clear_emergency_stop("admin")
+
+    for _ in range(2):
+        _closed_position(db, TradingMode.PAPER, realized_pnl=-10)
+    rm.run_periodic_safety_checks(TradingMode.PAPER, available_capital=10_000)
+    assert app_settings.emergency_stop_active is True
+
+
 def test_emergency_stop_cannot_be_re_enabled_by_toggling_bot_alone(db, app_settings):
     """Guards against a subtle bug: turning bot_enabled back on must not by
     itself let automatic trading resume while Emergency Stop is active."""
