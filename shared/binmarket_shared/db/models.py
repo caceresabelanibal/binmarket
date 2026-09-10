@@ -192,6 +192,13 @@ class Symbol(Base, TimestampMixin):
     is_favorite: Mapped[bool] = mapped_column(Boolean, default=False)
     is_auto_selected: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Commercial name/logo (e.g. "Bitcoin"/"BTC", not just the trading pair
+    # "BTCUSDT") - cosmetic only, populated best-effort from CoinGecko during
+    # /symbols/sync (see coingecko.py). NULL just means the UI falls back to
+    # showing the raw ticker, never a hard failure.
+    display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    logo_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     price_tick_size: Mapped[float] = mapped_column(Float, default=0.0)
     lot_step_size: Mapped[float] = mapped_column(Float, default=0.0)
     min_qty: Mapped[float] = mapped_column(Float, default=0.0)

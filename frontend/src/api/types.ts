@@ -59,6 +59,8 @@ export interface SymbolInfo {
   is_selected: boolean;
   is_favorite: boolean;
   is_auto_selected: boolean;
+  display_name: string | null;
+  logo_url: string | null;
   price_tick_size: number;
   lot_step_size: number;
   min_notional: number;

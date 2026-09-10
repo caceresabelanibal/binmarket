@@ -11,6 +11,7 @@ from app.core.binance_factory import get_binance_client_for_mode
 from app.core.deps import get_app_settings, get_current_user, get_db
 from app.redis_client import redis_client
 from binmarket_shared.binance.filters import SymbolFilters
+from binmarket_shared.coingecko import fetch_symbol_name_logo_map
 from binmarket_shared.db.models import AppSettings, Symbol, User
 from binmarket_shared.redis_keys import ticker_key
 
@@ -25,6 +26,8 @@ class SymbolResponse(BaseModel):
     is_selected: bool
     is_favorite: bool
     is_auto_selected: bool
+    display_name: str | None = None
+    logo_url: str | None = None
     price_tick_size: float
     lot_step_size: float
     min_notional: float
@@ -71,6 +74,11 @@ def sync_symbols(
     finally:
         client.close()
 
+    # Best-effort, cosmetic only (see coingecko.py) - an empty dict here just
+    # means every row keeps showing the raw ticker instead of a commercial
+    # name, never a reason to fail the sync.
+    name_logo_map = fetch_symbol_name_logo_map()
+
     created, updated = 0, 0
     for s in info.get("symbols", []):
         if s.get("status") != "TRADING":
@@ -90,8 +98,12 @@ def sync_symbols(
         row.max_qty = filters.max_qty
         row.min_notional = filters.min_notional
 
+        name_logo = name_logo_map.get(s["baseAsset"])
+        if name_logo:
+            row.display_name, row.logo_url = name_logo
+
     db.commit()
-    return {"created": created, "updated": updated}
+    return {"created": created, "updated": updated, "names_matched": len(name_logo_map)}
 
 
 def _merge_live_stats(row: Symbol) -> SymbolResponse:

@@ -31,6 +31,9 @@ postgres_data/
 redis_data/
 *.log
 
+# Database dumps (real trade history/credentials-adjacent data - never committed)
+backups/
+
 # IDE / OS
 .vscode/
 .idea/

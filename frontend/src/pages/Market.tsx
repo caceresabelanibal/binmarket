@@ -150,7 +150,27 @@ export function Market() {
               <tr key={s.symbol} className="hover:bg-slate-800/40 cursor-pointer" onClick={() => setSelectedSymbol(s.symbol)}>
                 <td className="py-2 px-2">{s.symbol === selectedSymbol && <Badge tone="good">viendo</Badge>}</td>
                 <td className="py-2 px-2 font-medium">
-                  {s.symbol} {s.is_auto_selected && <Badge tone="warn">AUTO</Badge>}
+                  <div className="flex items-center gap-2">
+                    {s.logo_url ? (
+                      <img
+                        src={s.logo_url}
+                        alt=""
+                        className="w-6 h-6 rounded-full shrink-0 bg-slate-800"
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-slate-800 shrink-0" />
+                    )}
+                    <div className="leading-tight">
+                      <div>{s.display_name ?? s.base_asset}</div>
+                      <div className="text-xs text-slate-500 font-normal flex items-center gap-1">
+                        {s.symbol}
+                        {s.is_auto_selected && <Badge tone="warn">AUTO</Badge>}
+                      </div>
+                    </div>
+                  </div>
                 </td>
                 <td className="py-2 px-2">{fmtUsd(livePrice, livePrice && livePrice < 1 ? 6 : 2)}</td>
                 <td className={`py-2 px-2 ${(s.price_change_pct_24h ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>

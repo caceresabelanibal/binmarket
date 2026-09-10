@@ -284,7 +284,24 @@ export function Dashboard() {
             <div className="grid grid-cols-2 gap-3">
               {symbols.map((s) => (
                 <div key={s.symbol} className="flex items-center justify-between bg-slate-800/50 rounded px-3 py-2">
-                  <span className="font-medium">{s.symbol}</span>
+                  <span className="flex items-center gap-2">
+                    {s.logo_url ? (
+                      <img
+                        src={s.logo_url}
+                        alt=""
+                        className="w-5 h-5 rounded-full shrink-0 bg-slate-900"
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <div className="w-5 h-5 rounded-full bg-slate-900 shrink-0" />
+                    )}
+                    <span className="leading-tight">
+                      <span className="font-medium block">{s.display_name ?? s.base_asset}</span>
+                      <span className="text-xs text-slate-500">{s.symbol}</span>
+                    </span>
+                  </span>
                   <span className={`text-sm ${(s.price_change_pct_24h ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                     {fmtUsd(s.last_price)} {(s.price_change_pct_24h ?? 0) >= 0 ? "↑" : "↓"}
                   </span>
