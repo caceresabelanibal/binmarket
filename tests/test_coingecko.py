@@ -22,7 +22,7 @@ def test_builds_symbol_to_name_logo_map_from_first_page():
             httpx.Response(200, json=[]),  # page 2 empty -> stop early
         ]
     )
-    result = fetch_symbol_name_logo_map(pages=4)
+    result = fetch_symbol_name_logo_map(pages=4, page_delay_seconds=0)
 
     assert result["BTC"] == ("Bitcoin", "https://x/btc.png")
     assert result["ETH"] == ("Ethereum", "https://x/eth.png")
@@ -39,7 +39,7 @@ def test_higher_market_cap_coin_wins_a_shared_ticker():
             json=[_coin("luna", "Terra Luna Classic", "https://x/luna-big.png"), _coin("luna", "Some Obscure Luna Clone", "https://x/luna-small.png")],
         )
     )
-    result = fetch_symbol_name_logo_map(pages=1)
+    result = fetch_symbol_name_logo_map(pages=1, page_delay_seconds=0)
 
     assert result["LUNA"] == ("Terra Luna Classic", "https://x/luna-big.png")
 
@@ -48,16 +48,36 @@ def test_higher_market_cap_coin_wins_a_shared_ticker():
 def test_network_failure_returns_empty_dict_not_an_exception():
     respx.get(COINGECKO_MARKETS_URL).mock(side_effect=httpx.ConnectError("boom"))
 
-    result = fetch_symbol_name_logo_map()
+    result = fetch_symbol_name_logo_map(page_delay_seconds=0)
 
     assert result == {}
+
+
+@respx.mock
+def test_rate_limit_on_a_later_page_keeps_the_earlier_pages_already_fetched():
+    # Regression test for a real incident: CoinGecko 429'd on page 4 of 4,
+    # and the whole result (including pages 1-3, which succeeded) was
+    # discarded instead of keeping what had already been fetched.
+    respx.get(COINGECKO_MARKETS_URL).mock(
+        side_effect=[
+            httpx.Response(200, json=[_coin("btc", "Bitcoin", "https://x/btc.png")]),
+            httpx.Response(200, json=[_coin("eth", "Ethereum", "https://x/eth.png")]),
+            httpx.Response(200, json=[_coin("sol", "Solana", "https://x/sol.png")]),
+            httpx.Response(429, json={"error": "rate limited"}),
+        ]
+    )
+    result = fetch_symbol_name_logo_map(pages=4, page_delay_seconds=0)
+
+    assert result["BTC"] == ("Bitcoin", "https://x/btc.png")
+    assert result["ETH"] == ("Ethereum", "https://x/eth.png")
+    assert result["SOL"] == ("Solana", "https://x/sol.png")
 
 
 @respx.mock
 def test_rate_limit_response_returns_empty_dict_not_an_exception():
     respx.get(COINGECKO_MARKETS_URL).mock(return_value=httpx.Response(429, json={"error": "rate limited"}))
 
-    result = fetch_symbol_name_logo_map()
+    result = fetch_symbol_name_logo_map(page_delay_seconds=0)
 
     assert result == {}
 
@@ -67,6 +87,6 @@ def test_coin_missing_an_image_is_skipped_not_stored_with_a_blank_logo():
     respx.get(COINGECKO_MARKETS_URL).mock(
         return_value=httpx.Response(200, json=[{"symbol": "xyz", "name": "Xyz Coin", "image": None}])
     )
-    result = fetch_symbol_name_logo_map(pages=1)
+    result = fetch_symbol_name_logo_map(pages=1, page_delay_seconds=0)
 
     assert result == {}
