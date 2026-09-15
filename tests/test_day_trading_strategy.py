@@ -119,7 +119,27 @@ def test_no_trade_at_or_after_the_eod_flatten_hour():
     signal = strategy.generate_signal(ctx)
 
     assert signal.action == "NO_TRADE"
-    assert any("cierre de día" in r.lower() for r in signal.reasons)
+    assert any("cierre de fin de día" in r.lower() for r in signal.reasons)
+
+
+def test_no_trade_when_too_close_to_the_eod_hour_even_if_not_reached_yet():
+    """A trade opened with only an hour of runway left gets force-closed
+    almost immediately regardless of how it's doing - this buffer exists
+    specifically to stop that, separate from the hard cutoff at the EOD
+    hour itself."""
+    df = _uptrend_1h_df()
+    last_hour = df.index[-1].hour
+    strategy = DayTradingStrategy(params={
+        "eod_flatten_hour_utc": last_hour + 2, "min_hours_before_eod_entry": 4,
+        "min_opportunity_score": 0, "min_seasonality_edge_pct": -1000.0,
+    })
+    regime = RegimeReading(trend=TrendRegime.UPTREND, volatility=VolatilityRegime.NORMAL, adx_value=25, volatility_pct=1.0)
+    ctx = _ctx(df, regime, float(df["close"].iloc[-1]))
+
+    signal = strategy.generate_signal(ctx)
+
+    assert signal.action == "NO_TRADE"
+    assert any("muy cerca del cierre" in r.lower() for r in signal.reasons)
 
 
 def test_no_trade_when_net_profit_after_costs_does_not_clear_the_gate():

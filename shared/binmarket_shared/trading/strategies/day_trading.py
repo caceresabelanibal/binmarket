@@ -20,8 +20,6 @@ pure function of the same `ctx.df` every other 1h strategy already gets.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from binmarket_shared.quant import indicators as ind
 from binmarket_shared.quant.costs import estimate_spread_pct, estimate_trade_economics
 from binmarket_shared.quant.regime import RegimeReading, VolatilityRegime
@@ -57,32 +55,53 @@ class DayTradingStrategy(BaseStrategy):
         "ema_slow": 21,
         "rsi_period": 14,
         "atr_period": 14,
-        "atr_stop_multiplier": 1.5,
-        "take_profit_rr": 2.0,
-        "min_opportunity_score": 65.0,
-        "max_entry_rsi": 72.0,
-        "min_entry_rsi": 35.0,
+        # Sized for an intraday round-trip, not a multi-day swing: a 2:1 R:R
+        # on a wide ATR target combined with a same-day forced flatten meant
+        # most trades never got anywhere near take-profit before being cut
+        # off - they just rode the full stop-loss risk without collecting
+        # the reward that was supposed to offset it. A real backtest over
+        # 540 days of ETHUSDT/BTCUSDT 1h data showed this exact failure mode
+        # (roughly double trend_following's losses on the same data). Tighter
+        # stop + a target that can plausibly be reached within the remaining
+        # hours of the day fixes the mismatch.
+        "atr_stop_multiplier": 1.0,
+        "take_profit_rr": 1.5,
+        "min_opportunity_score": 72.0,
+        "max_entry_rsi": 68.0,
+        "min_entry_rsi": 40.0,
         "deterioration_exit_score": 35.0,
         # Max points (+/-) the hour-of-day seasonality read can shift the
         # trend score - a real signal, not the whole decision by itself.
         "seasonality_weight_pts": 20.0,
-        # A clearly negative historical bias for this hour blocks a new
-        # entry outright, regardless of how good the technicals look - this
-        # is what makes seasonality a genuine timing gate, not just a
-        # cosmetic score nudge.
-        "min_seasonality_edge_pct": -0.05,
+        # Requires a genuinely positive historical bias for this hour, not
+        # merely "not clearly negative" - the looser version let seasonality
+        # wave almost everything through, which is most of why the strategy
+        # overtraded (671 trades/540 days on ETHUSDT in backtesting, ~2.5x
+        # trend_following's rate on the same data).
+        "min_seasonality_edge_pct": 0.02,
+        # A positive average with only 1-2 historical samples is close to
+        # noise, not an edge - require at least this many observed
+        # occurrences of the current hour before trusting it as confirmation.
+        "min_seasonality_samples": 3,
         "weekly_lookback_days": WEEKLY_LOOKBACK_DAYS,
         # Flatten everything at/after this UTC hour - no position survives
         # to the next day regardless of its own stop-loss/take-profit.
         "eod_flatten_hour_utc": 23,
+        # Don't open a new position if fewer than this many hours remain
+        # before the EOD flatten - a trade opened with 1 hour of runway left
+        # gets force-closed almost immediately regardless of how it's doing,
+        # which is pure noise, not a decision.
+        "min_hours_before_eod_entry": 4,
     }
 
     @property
     def min_bars_required(self) -> int:
-        # Can run on less than a full week - seasonality just has fewer
-        # samples per hour and is correspondingly less confident, not
-        # blocked outright (see hourly_edge's sample_count).
-        return 30
+        # Same floor as the other 1h strategies (trend_following/mean_reversion
+        # /breakout all default to BaseStrategy's 60) - the original 30 let
+        # this strategy start trading on indicators (EMA21/ADX/ATR) that
+        # hadn't stabilized yet, contributing to the overtrading problem
+        # found in backtesting.
+        return 60
 
     def is_regime_eligible(self, regime: RegimeReading) -> bool:
         # Any trend direction is fine - the seasonality+momentum read below
@@ -182,11 +201,14 @@ class DayTradingStrategy(BaseStrategy):
                 "NO_TRADE", scores, reasons + [f"Régimen actual ({ctx.regime.label}) no favorable para Day Trading"]
             )
 
-        now_hour = datetime.now(timezone.utc).hour
-        if now_hour >= int(p["eod_flatten_hour_utc"]):
+        hours_until_eod = int(p["eod_flatten_hour_utc"]) - current_hour
+        if hours_until_eod < int(p["min_hours_before_eod_entry"]):
             return StrategySignal(
                 "NO_TRADE", scores,
-                reasons + [f"Fuera de horario de entrada (cierre de día a las {p['eod_flatten_hour_utc']}:00 UTC)"],
+                reasons + [
+                    f"Muy cerca del cierre de fin de día (quedan {max(hours_until_eod, 0)}h, se requieren "
+                    f"al menos {int(p['min_hours_before_eod_entry'])}h de margen para una entrada nueva)"
+                ],
             )
 
         if economics.net_profit_pct < ctx.min_expected_net_profit_pct:
@@ -202,10 +224,17 @@ class DayTradingStrategy(BaseStrategy):
 
         rsi_in_range = p["min_entry_rsi"] <= snap.rsi <= p["max_entry_rsi"]
         aligned = snap.ema_fast > snap.ema_slow
-        seasonality_ok = edge.avg_return_pct >= p["min_seasonality_edge_pct"]
+        seasonality_ok = (
+            edge.avg_return_pct >= p["min_seasonality_edge_pct"]
+            and edge.sample_count >= int(p["min_seasonality_samples"])
+        )
 
         if not seasonality_ok:
-            reasons.append("Bloqueado: la hora actual tiene un sesgo histórico negativo para este símbolo")
+            reasons.append(
+                "Bloqueado: la hora actual no tiene un sesgo histórico positivo confirmado para este símbolo "
+                f"(requiere >= {p['min_seasonality_edge_pct']:.2f}% con al menos "
+                f"{int(p['min_seasonality_samples'])} muestras)"
+            )
 
         if opportunity_score >= p["min_opportunity_score"] and aligned and rsi_in_range and seasonality_ok:
             action = "BUY"
@@ -225,9 +254,9 @@ class DayTradingStrategy(BaseStrategy):
         if ctx.open_position is None:
             return False, None
 
-        now_hour = datetime.now(timezone.utc).hour
-        if now_hour >= int(self.params["eod_flatten_hour_utc"]):
-            return True, f"Cierre de fin de día ({now_hour}:00 UTC) — no se mantienen posiciones de un día para el otro"
+        bar_hour = ctx.df.index[-1].hour
+        if bar_hour >= int(self.params["eod_flatten_hour_utc"]):
+            return True, f"Cierre de fin de día ({bar_hour}:00 UTC) — no se mantienen posiciones de un día para el otro"
 
         snap = self._snapshot(ctx)
         if snap.ema_fast < snap.ema_slow:
