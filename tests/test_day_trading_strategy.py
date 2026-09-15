@@ -77,7 +77,14 @@ def test_never_buys_again_while_a_position_is_already_open():
 
 
 def test_buys_on_a_strong_uptrend_when_seasonality_cannot_block_it():
-    strategy = DayTradingStrategy(params={**NEVER_EOD, "min_opportunity_score": 0, "min_seasonality_edge_pct": -1000.0})
+    # RSI on a smooth, uninterrupted synthetic uptrend runs deep into
+    # overbought territory - opening the RSI band here isolates what this
+    # test is actually about (seasonality not vetoing the entry) from the
+    # unrelated, realistic RSI entry-range gate exercised elsewhere.
+    strategy = DayTradingStrategy(params={
+        **NEVER_EOD, "min_opportunity_score": 0, "min_seasonality_edge_pct": -1000.0,
+        "min_entry_rsi": 0.0, "max_entry_rsi": 100.0,
+    })
     df = _uptrend_1h_df()
     regime = RegimeReading(trend=TrendRegime.UPTREND, volatility=VolatilityRegime.NORMAL, adx_value=25, volatility_pct=1.0)
     ctx = _ctx(df, regime, float(df["close"].iloc[-1]))
