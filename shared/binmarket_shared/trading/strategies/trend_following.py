@@ -35,9 +35,20 @@ class TrendFollowingStrategy(BaseStrategy):
     }
 
     def is_regime_eligible(self, regime: RegimeReading) -> bool:
-        return regime.trend in (TrendRegime.STRONG_UPTREND, TrendRegime.UPTREND) and regime.volatility not in (
-            VolatilityRegime.EXTREME,
-        )
+        # Backtested against 540 real days of ETHUSDT/BTCUSDT 1h data: the
+        # plain UPTREND+STRONG_UPTREND filter lost money in both symbols
+        # (ROI -17.65%/-16.65%, profit_factor well under 1), and a per-window
+        # walk-forward showed the classified regime at a window's *start* has
+        # almost no predictive power over that window's outcome - trend/ADX
+        # classification is inherently lagging. Restricting entries to only
+        # STRONG_UPTREND (excluding plain UPTREND, i.e. ADX<=25 or a flat
+        # EMA20 slope) measurably reduced the loss in the same backtest
+        # (-17.65%->-15.85% ETH, -16.65%->-10.25% BTC) by cutting the
+        # weaker-signal trades, even though it did not turn it profitable.
+        # Adopted as a real-money loss-mitigation while a genuinely
+        # profitable approach is still being researched - not a claim that
+        # this alone makes the strategy have positive expectancy.
+        return regime.trend == TrendRegime.STRONG_UPTREND and regime.volatility not in (VolatilityRegime.EXTREME,)
 
     def _snapshot(self, ctx: StrategyContext) -> IndicatorSnapshot:
         p = self.params
