@@ -55,7 +55,9 @@ SNAPSHOT_INTERVAL = timedelta(minutes=10)
 # of a target that small, for any entry-signal quality). Order here is a
 # priority when more than one is eligible for the current regime, not a
 # guess - see the analysis behind this change for the actual numbers.
-STRATEGY_PRIORITY_ORDER = ["trend_following", "mean_reversion", "breakout", "scalping"]
+# day_trading (requested directly by the user: weekly/daily context +
+# end-of-day flatten) is tried first when enabled.
+STRATEGY_PRIORITY_ORDER = ["day_trading", "trend_following", "mean_reversion", "breakout", "scalping"]
 
 
 def _enabled_strategy_priority(db) -> list[str]:
@@ -64,7 +66,11 @@ def _enabled_strategy_priority(db) -> list[str]:
 
 
 AUTO_SELECT_GATE_KEY = "binmarket:trading-engine:auto-select-gate"
-AUTO_SELECT_INTERVAL_SECONDS = 15 * 60
+# Once a day (requested directly by the user: "todos los días toma esa
+# decisión") - day_trading picks a fresh symbol pool each day and flattens
+# everything by end of day, so there's no reason to re-pick more often than
+# that; a 15-minute cadence was right for the old scalping pairing, not this.
+AUTO_SELECT_INTERVAL_SECONDS = 24 * 60 * 60
 
 # History for the Dashboard's "Capital real" card - independent of trading
 # mode (PAPER/TESTNET/LIVE all still have a real account behind them), so
