@@ -8,7 +8,6 @@ import { Market } from "./pages/Market";
 import { Strategies } from "./pages/Strategies";
 import { Backtesting } from "./pages/Backtesting";
 import { Portfolio } from "./pages/Portfolio";
-import { Orders } from "./pages/Orders";
 import { Positions } from "./pages/Positions";
 import { Signals } from "./pages/Signals";
 import { Risk } from "./pages/Risk";
@@ -35,7 +34,6 @@ export default function App() {
           <Route path="/strategies" element={<Strategies />} />
           <Route path="/backtesting" element={<Backtesting />} />
           <Route path="/portfolio" element={<Portfolio />} />
-          <Route path="/orders" element={<Orders />} />
           <Route path="/positions" element={<Positions />} />
           <Route path="/signals" element={<Signals />} />
           <Route path="/risk" element={<Risk />} />

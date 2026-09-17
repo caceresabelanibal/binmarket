@@ -11,7 +11,6 @@ const NAV_ITEMS = [
   { to: "/", label: "Dashboard" },
   { to: "/market", label: "Market" },
   { to: "/strategies", label: "Strategies" },
-  { to: "/orders", label: "Orders" },
   { to: "/risk", label: "Risk" },
   { to: "/logs", label: "Logs" },
   { to: "/binance", label: "Binance" },

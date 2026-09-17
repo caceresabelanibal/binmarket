@@ -10,7 +10,7 @@ import type {
   SymbolInfo,
   TradeStats,
 } from "../api/types";
-import { ActionBadge, Button, Card, fmtArs, fmtPct, fmtUsd, Stat, Table } from "../components/ui";
+import { ActionBadge, Badge, Button, Card, fmtArs, fmtPct, fmtUsd, Stat, Table } from "../components/ui";
 import type { Settings } from "../api/types";
 
 const HISTORY_PAGE_SIZE = 10;
@@ -24,6 +24,18 @@ function fmtQty(v: number): string {
   if (v === 0) return "0";
   const decimals = v >= 1 ? 2 : 8;
   return v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: decimals });
+}
+
+// A BUY/SELL signal only actually moves real capital when `acted_upon` is
+// true (set by OrderManager the moment it places a real order) - position
+// sizing or the Risk Manager can (and often do, on thin capital) reject a
+// BUY/SELL signal after the fact, which otherwise looks identical to a real
+// trade in this table (same green "BUY" badge either way).
+function signalOutcomeBadge(s: Signal) {
+  if (s.action !== "BUY" && s.action !== "SELL") {
+    return <span className="text-slate-600">—</span>;
+  }
+  return s.acted_upon ? <Badge tone="good">Ejecutada</Badge> : <Badge tone="bad">Rechazada</Badge>;
 }
 
 export function Dashboard() {
@@ -360,14 +372,20 @@ export function Dashboard() {
       </div>
 
       <Card title="Señales recientes">
-        <Table headers={["Hora", "Símbolo", "Acción", "Score", "Estrategia"]}>
+        <p className="text-xs text-slate-600 mb-2">
+          "Acción" es lo que la estrategia quiso hacer; "Resultado" indica si realmente se ejecutó una operación real o
+          si fue rechazada (por ejemplo, por no alcanzar el mínimo del exchange) — un BUY rechazado nunca aparece en
+          las posiciones ni mueve el capital.
+        </p>
+        <Table headers={["Fecha", "Símbolo", "Acción", "Resultado", "Score", "Estrategia"]}>
           {signals.map((s) => (
             <tr key={s.id}>
-              <td className="py-2 px-2 text-slate-500">{new Date(s.created_at).toLocaleTimeString()}</td>
+              <td className="py-2 px-2 text-slate-500 whitespace-nowrap">{new Date(s.created_at).toLocaleString()}</td>
               <td className="py-2 px-2 font-medium">{s.symbol}</td>
               <td className="py-2 px-2">
                 <ActionBadge action={s.action} />
               </td>
+              <td className="py-2 px-2">{signalOutcomeBadge(s)}</td>
               <td className="py-2 px-2">{s.opportunity_score.toFixed(0)}</td>
               <td className="py-2 px-2 text-slate-400">{s.strategy_name}</td>
             </tr>
