@@ -21,6 +21,28 @@ def _uptrend_5m_df(n=60, start_price=100.0):
     )
 
 
+def _accelerating_5m_df(n=60, start_price=100.0):
+    """Slow, steady climb for most of the window, then a clear speed-up in
+    the last few bars - the exact "recent return > prior return" shape the
+    acceleration gate is meant to catch (as opposed to `_uptrend_5m_df`'s
+    constant per-bar growth rate, whose recent/prior returns are identical,
+    i.e. never actually accelerating)."""
+    idx = pd.date_range("2024-01-01", periods=n, freq="5min")
+    price = start_price
+    closes = []
+    for i in range(n):
+        step_pct = 0.0005 if i < n - 3 else 0.006
+        price *= 1 + step_pct
+        closes.append(price)
+    return pd.DataFrame(
+        {
+            "open": closes, "high": [c * 1.0005 for c in closes], "low": [c * 0.9995 for c in closes],
+            "close": closes, "volume": [1000.0 + i * 5 for i in range(n)],
+        },
+        index=idx,
+    )
+
+
 def _ctx(df, regime, current_price, open_position=None):
     return StrategyContext(
         df=df, symbol="TESTUSDT", timeframe="5m", regime=regime, current_price=current_price,
@@ -41,7 +63,7 @@ def test_preferred_timeframe_is_5m_not_1h():
 
 
 def test_needs_far_fewer_bars_than_the_1h_strategies():
-    assert ScalpingStrategy().min_bars_required <= 30
+    assert ScalpingStrategy().min_bars_required <= 45
 
 
 @pytest.mark.parametrize(
@@ -84,6 +106,38 @@ def test_never_buys_again_while_a_position_is_already_open():
     )
     signal = strategy.generate_signal(ctx)
     assert signal.action == "HOLD"
+
+
+def test_buys_when_short_term_momentum_is_accelerating():
+    strategy = ScalpingStrategy(params={
+        "min_opportunity_score": 0, "min_entry_rsi": 0.0, "max_entry_rsi": 100.0,
+    })
+    df = _accelerating_5m_df()
+    regime = RegimeReading(trend=TrendRegime.UPTREND, volatility=VolatilityRegime.NORMAL, adx_value=25, volatility_pct=1.0)
+    ctx = _ctx(df, regime, float(df["close"].iloc[-1]))
+
+    signal = strategy.generate_signal(ctx)
+
+    assert signal.action == "BUY"
+    assert any("Acelerando ahora" in r for r in signal.reasons)
+
+
+def test_no_buy_without_short_term_acceleration_even_with_a_good_score():
+    """A steady, constant-rate climb (recent return == prior return, never
+    actually speeding up) must not buy just because the score/RSI/alignment
+    all look fine - the acceleration gate is the actual timing signal, not a
+    cosmetic add-on."""
+    strategy = ScalpingStrategy(params={
+        "min_opportunity_score": 0, "min_entry_rsi": 0.0, "max_entry_rsi": 100.0,
+    })
+    df = _uptrend_5m_df()
+    regime = RegimeReading(trend=TrendRegime.UPTREND, volatility=VolatilityRegime.NORMAL, adx_value=25, volatility_pct=1.0)
+    ctx = _ctx(df, regime, float(df["close"].iloc[-1]))
+
+    signal = strategy.generate_signal(ctx)
+
+    assert signal.action != "BUY"
+    assert any("Sin aceleración" in r for r in signal.reasons)
 
 
 def test_no_trade_when_net_profit_after_costs_does_not_clear_the_gate():

@@ -28,33 +28,65 @@ class ScalpingStrategy(BaseStrategy):
     """
 
     name = "scalping"
-    version = "1.0.0"
+    version = "2.0.0"
     description = (
-        "Muchas operaciones chicas por día: entra en micro-impulsos de corto plazo (5m) y "
-        "cierra apenas alcanza una ganancia neta pequeña y configurable, con stop-loss ajustado."
+        "Muchas operaciones chicas por día: detecta micro-aceleración de precio de corto plazo (5m) y "
+        "entra sólo cuando el impulso reciente es más fuerte que el anterior, cerrando apenas alcanza una "
+        "ganancia neta pequeña y configurable, con stop-loss ajustado."
     )
     preferred_timeframe = "5m"
     default_params = {
         "ema_fast": 9,
         "ema_slow": 21,
         "rsi_period": 14,
-        "take_profit_pct": 0.5,
-        "stop_loss_pct": 0.6,
-        "min_opportunity_score": 55.0,
-        "max_entry_rsi": 70.0,
-        "min_entry_rsi": 35.0,
+        # v1.0.0 (0.5%/0.6%) backtested at profit_factor ~0.12-0.20 on real
+        # 5m data (ETHUSDT 7 days, BTCUSDT 22 days) - after the real
+        # round-trip cost (fee+slippage, ~0.3% both ways combined), the net
+        # reward was only ~0.2% against a net risk of ~0.9%, a losing
+        # trade-off regardless of entry quality. Widened to a real positive
+        # after-cost edge (net ~0.7% reward vs ~0.8% risk).
+        "take_profit_pct": 1.0,
+        "stop_loss_pct": 0.5,
+        "min_opportunity_score": 65.0,
+        "max_entry_rsi": 68.0,
+        "min_entry_rsi": 40.0,
         "deterioration_exit_score": 35.0,
+        # Mini modelo predictivo (parte 3 del pedido): compara el retorno de
+        # los últimos `accel_lookback_bars` con el bloque anterior de igual
+        # tamaño - un genuino "está acelerando *ahora*", no sólo "ya se
+        # movió" (que es lo que "moved a lot in the last 24h" mide, y que
+        # puede ya estar agotado). Transparente y explicable, no una caja
+        # negra: aparece en el Decision Log igual que cualquier otro score.
+        "accel_lookback_bars": 3,
+        "min_accel_pct": 0.05,
     }
 
     @property
     def min_bars_required(self) -> int:
-        return 30  # EMA9/21 + RSI14 need much less warmup than the 1h strategies
+        return 40  # EMA9/21 + RSI14 + the acceleration window need a bit more warmup than v1.0.0's 30
 
     def is_regime_eligible(self, regime: RegimeReading) -> bool:
         # LOW volatility: not enough movement to clear costs with a small
         # target. EXTREME: too whippy for a tight stop. Any trend direction
         # is fine — scalping looks for micro-moves, not the macro trend.
         return regime.volatility in (VolatilityRegime.NORMAL, VolatilityRegime.HIGH)
+
+    def _acceleration(self, ctx: StrategyContext) -> tuple[float, float]:
+        """Returns (recent_return_pct, prior_return_pct): the % price change
+        over the last `accel_lookback_bars` bars, and over the equal-sized
+        block immediately before it. Recent > prior (and clearly positive)
+        means the move is speeding up right now - the actual "predictive"
+        read this strategy needs, since a move that already happened (even
+        a big one) is not the same as one still building."""
+        bars = int(self.params["accel_lookback_bars"])
+        close = ctx.df["close"]
+        if len(close) < bars * 2 + 1:
+            return 0.0, 0.0
+        recent = close.iloc[-(bars + 1):]
+        prior = close.iloc[-(2 * bars + 1): -bars]
+        recent_return = (recent.iloc[-1] - recent.iloc[0]) / recent.iloc[0] * 100 if recent.iloc[0] else 0.0
+        prior_return = (prior.iloc[-1] - prior.iloc[0]) / prior.iloc[0] * 100 if prior.iloc[0] else 0.0
+        return float(recent_return), float(prior_return)
 
     def _snapshot(self, ctx: StrategyContext) -> IndicatorSnapshot:
         p = self.params
@@ -149,11 +181,23 @@ class ScalpingStrategy(BaseStrategy):
         rsi_in_range = p["min_entry_rsi"] <= snap.rsi <= p["max_entry_rsi"]
         aligned = snap.ema_fast > snap.ema_slow
 
-        if opportunity_score >= p["min_opportunity_score"] and aligned and rsi_in_range:
+        recent_accel, prior_accel = self._acceleration(ctx)
+        accelerating = recent_accel >= p["min_accel_pct"] and recent_accel > prior_accel
+        if accelerating:
+            reasons.append(
+                f"Acelerando ahora: {recent_accel:+.2f}% en las últimas {int(p['accel_lookback_bars'])} velas "
+                f"(vs. {prior_accel:+.2f}% en las {int(p['accel_lookback_bars'])} anteriores)"
+            )
+        else:
+            reasons.append(
+                f"Sin aceleración de corto plazo todavía ({recent_accel:+.2f}% vs. {prior_accel:+.2f}% anterior)"
+            )
+
+        if opportunity_score >= p["min_opportunity_score"] and aligned and rsi_in_range and accelerating:
             action = "BUY"
         elif opportunity_score >= p["min_opportunity_score"] * 0.7:
             action = "HOLD"
-            reasons.append("Score insuficiente o RSI fuera de rango todavía para entrar")
+            reasons.append("Score insuficiente, RSI fuera de rango o todavía sin aceleración confirmada")
         else:
             action = "NO_TRADE"
             reasons.append("Condiciones de entrada no se cumplen")
