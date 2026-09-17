@@ -20,6 +20,7 @@ import type {
   SymbolInfo,
   SymbolListResponse,
   SystemLog,
+  TradeStats,
 } from "./types";
 
 export const auth = {
@@ -50,6 +51,7 @@ export const binanceApi = {
   totalValue: () => get<BinanceTotalValue>("/binance/account/total-value"),
   totalValueHistory: (page = 1, pageSize = 10) =>
     get<RealAccountHistoryResponse>(`/binance/account/total-value/history?page=${page}&page_size=${pageSize}`),
+  tradeStats: () => get<TradeStats>("/binance/account/trade-stats"),
   exchangeInfo: (symbol?: string) => get<any>(`/binance/exchange-info${symbol ? `?symbol=${symbol}` : ""}`),
 };
 

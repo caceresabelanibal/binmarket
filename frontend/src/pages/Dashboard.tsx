@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import { binanceApi, portfolioApi, positionsApi, signalsApi, symbolsApi } from "../api/endpoints";
-import type { BinanceTotalValue, PortfolioSummary, Position, RealAccountHistoryResponse, Signal, SymbolInfo } from "../api/types";
+import type {
+  BinanceTotalValue,
+  PortfolioSummary,
+  Position,
+  RealAccountHistoryResponse,
+  Signal,
+  SymbolInfo,
+  TradeStats,
+} from "../api/types";
 import { ActionBadge, Button, Card, fmtArs, fmtPct, fmtUsd, Stat, Table } from "../components/ui";
 import type { Settings } from "../api/types";
 
@@ -32,6 +40,7 @@ export function Dashboard() {
   const [historyPage, setHistoryPage] = useState(1);
   const [history, setHistory] = useState<RealAccountHistoryResponse | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [tradeStats, setTradeStats] = useState<TradeStats | null>(null);
 
   async function refreshRealAccountValue() {
     setRefreshingRealAccount(true);
@@ -46,16 +55,18 @@ export function Dashboard() {
   }
 
   async function loadAll() {
-    const [s, p, sig, sym] = await Promise.allSettled([
+    const [s, p, sig, sym, ts] = await Promise.allSettled([
       portfolioApi.summary(),
       positionsApi.list({ status_filter: "OPEN" }),
       signalsApi.list({ limit: 8 }),
       symbolsApi.list({ selected_only: true, page_size: 200 }),
+      binanceApi.tradeStats(),
     ]);
     if (s.status === "fulfilled") setSummary(s.value);
     if (p.status === "fulfilled") setPositions(p.value);
     if (sig.status === "fulfilled") setSignals(sig.value);
     if (sym.status === "fulfilled") setSymbols(sym.value.items);
+    if (ts.status === "fulfilled") setTradeStats(ts.value);
   }
 
   useEffect(() => {
@@ -142,11 +153,17 @@ export function Dashboard() {
                 <div className="text-xl font-semibold text-slate-100">{fmtArs(realAccountValue.total_ars)}</div>
               </button>
               <Stat label="Total en USDT" value={fmtUsd(realAccountValue.total_usdt)} />
+              <Stat label="Capital operable" value={fmtUsd(tradeStats?.operable_capital_usdt)} />
               <div className="text-xs text-slate-500 self-end pb-1">
                 Cotización usada: 1 USDT = {realAccountValue.usdt_ars_rate?.toLocaleString("es-AR")} ARS (mercado
                 USDT/ARS de Binance)
               </div>
             </div>
+            <p className="text-xs text-slate-600 mt-1">
+              "Capital operable" es el USDT libre real para abrir posiciones nuevas — a diferencia del total de
+              arriba, no incluye ARS, posiciones abiertas ni otros activos que no se pueden usar directamente para
+              operar.
+            </p>
 
             {historyOpen && (
               <div className="mt-4 border-t border-slate-800 pt-3">
@@ -223,6 +240,36 @@ export function Dashboard() {
           Suma de todos los activos en tu wallet Spot de Binance (no incluye Earn/Staking), valuados al precio de
           mercado actual. Independiente del modo de trading (PAPER/TESTNET/LIVE) — es tu cuenta real.
         </p>
+      </Card>
+
+      <Card title="Operaciones ganadoras y perdedoras">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {(
+            [
+              ["Últimas 24hs", tradeStats?.last_24h],
+              ["Última semana", tradeStats?.last_7d],
+              ["Este mes (día 1 a hoy)", tradeStats?.month_to_date],
+            ] as const
+          ).map(([label, w]) => (
+            <div key={label} className="bg-slate-800/50 rounded px-3 py-3">
+              <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">{label}</div>
+              <div className="flex items-baseline justify-between">
+                <span className="text-emerald-400 font-medium">{w?.winning_trades ?? 0} ganadoras</span>
+                <span className="text-emerald-400 text-sm">{fmtUsd(w?.winning_amount_usdt)}</span>
+              </div>
+              <div className="flex items-baseline justify-between mt-1">
+                <span className="text-red-400 font-medium">{w?.losing_trades ?? 0} perdedoras</span>
+                <span className="text-red-400 text-sm">{fmtUsd(w?.losing_amount_usdt)}</span>
+              </div>
+              <div className="flex items-baseline justify-between mt-2 pt-2 border-t border-slate-700/60">
+                <span className="text-xs text-slate-500">Neto</span>
+                <span className={`text-sm font-medium ${(w?.net_pnl_usdt ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {fmtUsd(w?.net_pnl_usdt)}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
       </Card>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

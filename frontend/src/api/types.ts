@@ -272,6 +272,21 @@ export interface RealAccountHistoryResponse {
   page_size: number;
 }
 
+export interface TradeWindowStats {
+  winning_trades: number;
+  losing_trades: number;
+  winning_amount_usdt: number;
+  losing_amount_usdt: number;
+  net_pnl_usdt: number;
+}
+
+export interface TradeStats {
+  operable_capital_usdt: number;
+  last_24h: TradeWindowStats;
+  last_7d: TradeWindowStats;
+  month_to_date: TradeWindowStats;
+}
+
 export interface BinanceAccount {
   account_type?: string;
   can_trade?: boolean;
