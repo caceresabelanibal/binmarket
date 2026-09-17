@@ -464,6 +464,36 @@ class RealAccountSnapshot(Base):
     usdt_ars_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class OrderbookSnapshot(Base):
+    """Research data for a genuinely different scalping signal source
+    (requested directly by the user after real backtesting showed no
+    exploitable edge in classic 5m candle indicators after real trading
+    costs): periodic top-5 bid/ask depth from the live order book, throttled
+    and persisted by market-data (see ingest.py's depth handler) so a
+    forward-return analysis - "does bid/ask imbalance actually predict the
+    next few minutes' price move" - can be run once enough real history has
+    accumulated. Pruned to the last 30 days there too. Not read by any
+    trading strategy yet - this is data collection, not a live signal.
+    """
+
+    __tablename__ = "orderbook_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    best_bid: Mapped[float] = mapped_column(Float)
+    best_ask: Mapped[float] = mapped_column(Float)
+    mid_price: Mapped[float] = mapped_column(Float)
+    bid_volume_top5: Mapped[float] = mapped_column(Float)
+    ask_volume_top5: Mapped[float] = mapped_column(Float)
+    # (bid_volume - ask_volume) / (bid_volume + ask_volume) * 100 - positive
+    # means more resting buy interest than sell interest in the top 5 levels
+    # right now. This is the one number a forward-return analysis will
+    # actually test for predictive power; the rest is context to compute it
+    # differently later without needing to re-collect anything.
+    imbalance_pct: Mapped[float] = mapped_column(Float)
+
+
 class BotEvent(Base):
     __tablename__ = "bot_events"
 

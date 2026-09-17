@@ -84,3 +84,32 @@ def test_real_depth_payload_counts_toward_orderbook_bandwidth():
 
     bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
     assert redis.counters[bandwidth_bucket_key("orderbook", bucket)] == 200
+
+
+def test_depth_payload_persists_a_throttled_orderbook_snapshot(monkeypatch):
+    """Depth updates arrive every 100ms-1s; persisting every single one
+    would be hundreds of times more rows than a minutes-ahead forward-return
+    analysis needs, so only the first one within the throttle window should
+    actually reach the database."""
+    calls = []
+    monkeypatch.setattr(_ingest, "_persist_orderbook_snapshot", lambda *a: calls.append(a))
+    monkeypatch.setattr(_ingest, "_prune_old_orderbook_snapshots", lambda: None)
+    redis = AsyncFakeRedis()
+
+    asyncio.run(_handle_message(redis, REAL_DEPTH_PAYLOAD, 200, "btcusdt@depth5"))
+    asyncio.run(_handle_message(redis, REAL_DEPTH_PAYLOAD, 200, "btcusdt@depth5"))
+
+    assert len(calls) == 1
+    assert calls[0][0] == "BTCUSDT"
+
+
+def test_depth_payload_snapshot_throttle_is_per_symbol(monkeypatch):
+    calls = []
+    monkeypatch.setattr(_ingest, "_persist_orderbook_snapshot", lambda *a: calls.append(a[0]))
+    monkeypatch.setattr(_ingest, "_prune_old_orderbook_snapshots", lambda: None)
+    redis = AsyncFakeRedis()
+
+    asyncio.run(_handle_message(redis, REAL_DEPTH_PAYLOAD, 200, "btcusdt@depth5"))
+    asyncio.run(_handle_message(redis, REAL_DEPTH_PAYLOAD, 200, "ethusdt@depth5"))
+
+    assert calls == ["BTCUSDT", "ETHUSDT"]

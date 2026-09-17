@@ -20,18 +20,23 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from binmarket_shared.binance.ws import BinanceWebSocketClient
 from binmarket_shared.constants import TIMEFRAMES
 from binmarket_shared.db.base import session_scope
-from binmarket_shared.db.models import AppSettings, Candle, Symbol
+from binmarket_shared.db.models import AppSettings, Candle, OrderbookSnapshot, Symbol
 from binmarket_shared.redis_keys import (
     BANDWIDTH_BUCKET_TTL_SECONDS,
     bandwidth_bucket_key,
+    ORDERBOOK_SNAPSHOT_PRUNE_GATE_KEY,
+    ORDERBOOK_SNAPSHOT_PRUNE_INTERVAL_SECONDS,
+    ORDERBOOK_SNAPSHOT_RETENTION_DAYS,
+    ORDERBOOK_SNAPSHOT_THROTTLE_SECONDS,
+    orderbook_snapshot_throttle_key,
     orderbook_top_key,
     PRICE_UPDATES_CHANNEL,
     ticker_key,
@@ -83,6 +88,25 @@ def _upsert_candle(symbol: str, timeframe: str, k: dict) -> None:
             set_={k: v for k, v in values.items() if k not in ("symbol", "timeframe", "open_time")},
         )
         db.execute(stmt)
+
+
+def _persist_orderbook_snapshot(symbol: str, bids: list, asks: list) -> None:
+    best_bid, best_ask = float(bids[0][0]), float(asks[0][0])
+    bid_volume = sum(float(level[1]) for level in bids)
+    ask_volume = sum(float(level[1]) for level in asks)
+    total_volume = bid_volume + ask_volume
+    imbalance_pct = (bid_volume - ask_volume) / total_volume * 100 if total_volume else 0.0
+    with session_scope() as db:
+        db.add(OrderbookSnapshot(
+            symbol=symbol, best_bid=best_bid, best_ask=best_ask, mid_price=(best_bid + best_ask) / 2,
+            bid_volume_top5=bid_volume, ask_volume_top5=ask_volume, imbalance_pct=imbalance_pct,
+        ))
+
+
+def _prune_old_orderbook_snapshots() -> None:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=ORDERBOOK_SNAPSHOT_RETENTION_DAYS)
+    with session_scope() as db:
+        db.execute(delete(OrderbookSnapshot).where(OrderbookSnapshot.captured_at < cutoff))
 
 
 def _is_depth_payload(message: dict) -> bool:
@@ -141,6 +165,25 @@ async def _handle_message(redis, message: dict, num_bytes: int, stream_name: str
             bids, asks = message.get("bids", []), message.get("asks", [])
             if bids and asks:
                 await redis.set(orderbook_top_key(symbol), json.dumps({"bid": float(bids[0][0]), "ask": float(asks[0][0])}))
+
+                # Research data collection (requested directly by the user
+                # after real backtesting found no exploitable edge in 5m
+                # candle indicators): a throttled history of top-5 depth so
+                # a forward-return analysis on bid/ask imbalance can be run
+                # once enough real data has accumulated. Depth updates
+                # arrive every 100ms-1s; persisting every one of them would
+                # be ~500x more rows than this needs for a minutes-ahead
+                # analysis, so only one snapshot per symbol every
+                # ORDERBOOK_SNAPSHOT_THROTTLE_SECONDS actually gets written.
+                if await redis.set(
+                    orderbook_snapshot_throttle_key(symbol), "1", nx=True, ex=ORDERBOOK_SNAPSHOT_THROTTLE_SECONDS
+                ):
+                    await asyncio.to_thread(_persist_orderbook_snapshot, symbol, bids, asks)
+
+                if await redis.set(
+                    ORDERBOOK_SNAPSHOT_PRUNE_GATE_KEY, "1", nx=True, ex=ORDERBOOK_SNAPSHOT_PRUNE_INTERVAL_SECONDS
+                ):
+                    await asyncio.to_thread(_prune_old_orderbook_snapshots)
     except Exception:
         logger.exception("Failed to handle market-data WS message: %s", event_type)
 

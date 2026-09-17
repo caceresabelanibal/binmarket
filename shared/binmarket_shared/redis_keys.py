@@ -21,6 +21,16 @@ def orderbook_top_key(symbol: str) -> str:
     return f"binmarket:orderbook:top:{symbol.upper()}"
 
 
+def orderbook_snapshot_throttle_key(symbol: str) -> str:
+    return f"binmarket:orderbook:snapshot-throttle:{symbol.upper()}"
+
+
+ORDERBOOK_SNAPSHOT_THROTTLE_SECONDS = 10
+ORDERBOOK_SNAPSHOT_PRUNE_GATE_KEY = "binmarket:orderbook:snapshot-prune-gate"
+ORDERBOOK_SNAPSHOT_PRUNE_INTERVAL_SECONDS = 60 * 60
+ORDERBOOK_SNAPSHOT_RETENTION_DAYS = 30
+
+
 def latest_candle_key(symbol: str, timeframe: str) -> str:
     return f"binmarket:candle:latest:{symbol.upper()}:{timeframe}"
 
