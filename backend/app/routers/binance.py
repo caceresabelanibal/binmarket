@@ -108,7 +108,10 @@ def account_total_value_history(
     trading-engine/app/snapshots.py::take_real_account_snapshot) and pruned
     to the last 30 days there, independent of trading mode."""
     page = max(page, 1)
-    page_size = max(1, min(page_size, 100))
+    # 30 days of retention at a 6h cadence is up to 120 snapshots - the trend
+    # chart on the Dashboard fetches the whole window in one call, so the cap
+    # needs to clear that, not just the paginated table's page size.
+    page_size = max(1, min(page_size, 150))
     query = db.query(RealAccountSnapshot).order_by(RealAccountSnapshot.taken_at.desc())
     total = query.count()
     rows = query.offset((page - 1) * page_size).limit(page_size).all()

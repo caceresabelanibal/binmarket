@@ -5,12 +5,14 @@ import type {
   BinanceTotalValue,
   PortfolioSummary,
   Position,
+  RealAccountHistoryEntry,
   RealAccountHistoryResponse,
   Signal,
   SymbolInfo,
   TradeStats,
 } from "../api/types";
 import { ActionBadge, Badge, Button, Card, fmtArs, fmtPct, fmtUsd, Stat, Table } from "../components/ui";
+import { RealAccountTrendChart } from "../components/RealAccountTrendChart";
 import type { Settings } from "../api/types";
 
 const HISTORY_PAGE_SIZE = 10;
@@ -53,6 +55,21 @@ export function Dashboard() {
   const [history, setHistory] = useState<RealAccountHistoryResponse | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [tradeStats, setTradeStats] = useState<TradeStats | null>(null);
+  const [trendHover, setTrendHover] = useState(false);
+  const [trendEntries, setTrendEntries] = useState<RealAccountHistoryEntry[] | null>(null);
+  const [trendLoading, setTrendLoading] = useState(false);
+
+  function openTrend() {
+    setTrendHover(true);
+    if (trendEntries === null && !trendLoading) {
+      setTrendLoading(true);
+      binanceApi
+        .totalValueHistory(1, 150)
+        .then((r) => setTrendEntries(r.items))
+        .catch(() => setTrendEntries([]))
+        .finally(() => setTrendLoading(false));
+    }
+  }
 
   async function refreshRealAccountValue() {
     setRefreshingRealAccount(true);
@@ -152,18 +169,33 @@ export function Dashboard() {
         ) : (
           <>
             <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2">
-              <button
-                type="button"
-                className="text-left hover:opacity-80 transition-opacity"
-                onClick={() => setHistoryOpen((v) => !v)}
-                title="Ver histórico"
+              <div
+                className="relative"
+                onMouseEnter={openTrend}
+                onMouseLeave={() => setTrendHover(false)}
               >
-                <div className="text-xs text-slate-500 uppercase tracking-wide flex items-center gap-1">
-                  Total en pesos argentinos
-                  <span className="text-slate-600">{historyOpen ? "▾" : "▸"}</span>
-                </div>
-                <div className="text-xl font-semibold text-slate-100">{fmtArs(realAccountValue.total_ars)}</div>
-              </button>
+                <button
+                  type="button"
+                  className="text-left hover:opacity-80 transition-opacity"
+                  onClick={() => setHistoryOpen((v) => !v)}
+                  title="Ver histórico"
+                >
+                  <div className="text-xs text-slate-500 uppercase tracking-wide flex items-center gap-1">
+                    Total en pesos argentinos
+                    <span className="text-slate-600">{historyOpen ? "▾" : "▸"}</span>
+                  </div>
+                  <div className="text-xl font-semibold text-slate-100">{fmtArs(realAccountValue.total_ars)}</div>
+                </button>
+                {trendHover && (
+                  <div className="absolute z-20 top-full mt-2 left-0 bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-3">
+                    {trendLoading || trendEntries === null ? (
+                      <p className="text-xs text-slate-500 w-64">Cargando evolución...</p>
+                    ) : (
+                      <RealAccountTrendChart entries={trendEntries} />
+                    )}
+                  </div>
+                )}
+              </div>
               <Stat label="Total en USDT" value={fmtUsd(realAccountValue.total_usdt)} />
               <Stat label="Capital operable" value={fmtUsd(tradeStats?.operable_capital_usdt)} />
               <div className="text-xs text-slate-500 self-end pb-1">
