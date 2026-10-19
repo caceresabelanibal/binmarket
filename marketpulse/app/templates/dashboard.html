@@ -65,8 +65,13 @@
 
   <div class="card">
     <h2>Noticias recientes consideradas</h2>
+    <p class="reasoning-note" style="margin-top:0;">
+      "Ticker" es la empresa real detectada en el titular (o el índice general si no nombra una empresa específica).
+      "Predicción" es lo que el sentimiento propio de esa noticia -sola, sin mezclar con las demás- indicaría para ese
+      ticker, con el mismo umbral que usa la predicción combinada de arriba.
+    </p>
     <table>
-      <thead><tr><th>Fuente</th><th>Titular</th><th>Sentimiento</th><th>Categorías</th></tr></thead>
+      <thead><tr><th>Fuente</th><th>Titular</th><th>Ticker</th><th>Predicción</th><th>Sentimiento</th><th>Categorías</th></tr></thead>
       <tbody id="news-rows"></tbody>
     </table>
   </div>
@@ -130,17 +135,24 @@ async function loadNews() {
     a.href = item.url; a.target = "_blank"; a.rel = "noopener noreferrer";
     a.textContent = item.title;
     tdTitle.appendChild(a);
+    const tdTicker = document.createElement("td");
+    tdTicker.textContent = item.ticker;
+    const tdPrediction = document.createElement("td");
+    const predBadge = document.createElement("span");
+    predBadge.className = badgeClass(item.article_prediction);
+    predBadge.textContent = item.article_prediction;
+    tdPrediction.appendChild(predBadge);
     const tdSentiment = document.createElement("td");
     tdSentiment.textContent = item.sentiment_score.toFixed(2);
     tdSentiment.className = toneClass(item.sentiment_score);
     const tdCats = document.createElement("td");
     tdCats.className = "muted";
     tdCats.textContent = (item.matched_categories || []).join(", ") || "—";
-    tr.append(tdSource, tdTitle, tdSentiment, tdCats);
+    tr.append(tdSource, tdTitle, tdTicker, tdPrediction, tdSentiment, tdCats);
     tbody.appendChild(tr);
   }
   if (items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="muted">Todavía no se ingirió ninguna noticia.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">Todavía no se ingirió ninguna noticia.</td></tr>';
   }
 }
 

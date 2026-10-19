@@ -27,9 +27,21 @@ from .models import HistoricalEvent, NewsArticle, Prediction
 from .prices import fetch_daily_closes
 
 NEWS_LOOKBACK_HOURS = 48
-# Below this |score|, the signal is too weak/mixed to act on - NO_TRADE,
-# not a coin-flip LONG or SHORT.
+# Below this |score|, the signal is too weak/mixed to act on - NO_TRADE, not
+# a coin-flip LONG or SHORT. Shared with app/tickers.py's per-article call
+# (via score_to_direction below) so a single headline's own sentiment score
+# is judged by the exact same bar as the blended prediction - no separate,
+# looser threshold invented just to make individual articles look more
+# decisive than the real aggregate prediction.
 DIRECTION_THRESHOLD = 0.08
+
+
+def score_to_direction(score: float) -> str:
+    if score > DIRECTION_THRESHOLD:
+        return "LONG"
+    if score < -DIRECTION_THRESHOLD:
+        return "SHORT"
+    return "NO_TRADE"
 
 
 @dataclass
@@ -152,13 +164,7 @@ def generate_prediction(db: Session, symbol: str, horizon_hours: int = 48) -> Pr
     # most specific-to-right-now input); historical analogues and recent
     # trend are secondary confirmation/context, not drivers on their own.
     combined = news_sentiment * 0.55 + analogue_prior * 0.25 + trend_component * 0.20
-
-    if combined > DIRECTION_THRESHOLD:
-        direction = "LONG"
-    elif combined < -DIRECTION_THRESHOLD:
-        direction = "SHORT"
-    else:
-        direction = "NO_TRADE"
+    direction = score_to_direction(combined)
 
     # Confidence scales with |combined| AND how much real news volume backs
     # it - a strong score from 2 articles is less trustworthy than the same

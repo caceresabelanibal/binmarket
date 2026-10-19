@@ -14,7 +14,8 @@ from .backtest import evaluate_predictions, summarize_verdicts
 from .config import settings
 from .db import get_db
 from .models import HistoricalEvent, NewsArticle, Prediction, User
-from .predictor import generate_prediction
+from .predictor import generate_prediction, score_to_direction
+from .tickers import detect_ticker
 
 router = APIRouter(prefix="/api/v1", tags=["marketpulse"])
 
@@ -75,6 +76,14 @@ class NewsItemResponse(BaseModel):
     sentiment_score: float
     matched_categories: list
     published_at: str | None
+    # Which real ticker this specific article's own sentiment score would
+    # apply a prediction to, and what that single-article call would be
+    # (LONG/SHORT/NO_TRADE) - both derived live from the article's actual
+    # stored title/summary/sentiment_score, judged by the exact same
+    # threshold the main blended prediction uses (predictor.DIRECTION_THRESHOLD).
+    # Never a separate/invented number - see app/tickers.py's docstring.
+    ticker: str
+    article_prediction: str
 
     class Config:
         from_attributes = True
@@ -88,6 +97,8 @@ def recent_news(limit: int = 40, db: Session = Depends(get_db)) -> list[NewsItem
             title=r.title, url=r.url, source=r.source, sentiment_score=r.sentiment_score,
             matched_categories=r.matched_categories or [],
             published_at=r.published_at.isoformat() if r.published_at else None,
+            ticker=detect_ticker(f"{r.title}. {r.summary or ''}", settings.primary_symbol),
+            article_prediction=score_to_direction(r.sentiment_score),
         )
         for r in rows
     ]
