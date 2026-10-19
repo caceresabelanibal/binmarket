@@ -67,6 +67,12 @@ class HistoricalEvent(Base):
     title: Mapped[str] = mapped_column(String(255))
     category: Mapped[str] = mapped_column(String(64), index=True)
     description: Mapped[str] = mapped_column(Text)
+    # Which real symbol market_move_*_pct was computed from (e.g. "^GSPC",
+    # or "TSLA" for a single-stock event) - lets app/events_backfill.py
+    # re-fetch real prices later to fill in a move that didn't exist yet at
+    # seed time (an event less than 5 trading days old). Null only for rows
+    # seeded before this column existed, where no further backfill is needed.
+    symbol: Mapped[str | None] = mapped_column(String(16), nullable=True)
     market_move_1d_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     market_move_5d_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     source_note: Mapped[str] = mapped_column(Text)  # where the % figures came from, and how approximate they are

@@ -86,16 +86,34 @@ API key becomes available, that's the natural next upgrade.
 ## Historical events (`app/events_seed.py`)
 
 Nine real, dated events across six categories (wars/geopolitical shocks,
-Fed policy shocks, a banking-stress shock, the COVID crash, and two
-single-company shocks - Tesla's Cybertruck reveal and an Nvidia earnings
-beat, plus Meta's 2022 earnings-miss crash). **Every `market_move_*_pct`
-figure was independently computed from real Yahoo Finance daily closing
-prices** (not copied from secondary media reports, which were
-cross-checked during research and often gave inconsistent numbers for the
-same event) - each row's `source_note` names the exact two closing prices
-the percentage is between, so any number can be re-verified independently.
-Single-stock events are flagged as weaker analogues for a broad-index call
-than the index-level ones.
+Fed policy shocks, a banking-stress shock, the COVID crash, and three
+single-company shocks - a 2026 Tesla "flying Roadster" reveal, an Nvidia
+earnings beat, and Meta's 2022 earnings-miss crash). **Every
+`market_move_*_pct` figure was independently computed from real Yahoo
+Finance daily closing prices** (not copied from secondary media reports,
+which were cross-checked during research and often gave inconsistent
+numbers for the same event) - each row's `source_note` names the exact two
+closing prices the percentage is between, so any number can be re-verified
+independently. Single-stock events are flagged as weaker analogues for a
+broad-index call than the index-level ones.
+
+### Does this table grow on its own?
+
+Two different things happen here, and they're worth keeping separate:
+
+- **News (`news_articles`) grows continuously** - every ingest cycle adds
+  whatever's genuinely new from the 9 feeds.
+- **Historical events (`historical_events`) is hand-curated and does NOT
+  auto-add brand-new events.** Deciding "this is a real, comparable
+  analogue" needs human judgment - auto-adding events from news volume/
+  sentiment spikes would risk polluting a small, verified table with noise.
+  Adding a new event is a deliberate edit to `events_seed.py`.
+  What DOES happen automatically: `app/events_backfill.py` fills in a
+  `market_move_5d_pct` that didn't exist yet at seed time (an event added
+  less than 5 real trading days ago) with the real number, once enough
+  trading days have genuinely passed - never estimated, never guessed.
+  This is why the Tesla Roadster entry below may show `None` for its 5-day
+  move for a few days after you read this.
 
 ## Feeds (`app/feeds.py`)
 

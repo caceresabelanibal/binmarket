@@ -11,6 +11,7 @@ import logging
 
 from .config import settings
 from .db import session_scope
+from .events_backfill import backfill_pending_event_moves
 from .ingest import ingest_all_feeds, refresh_price_cache
 from .predictor import generate_prediction, persist_prediction
 
@@ -24,6 +25,11 @@ def run_cycle_once() -> None:
 
     with session_scope() as db:
         refresh_price_cache(db, settings.primary_symbol)
+
+    with session_scope() as db:
+        backfilled = backfill_pending_event_moves(db)
+        if backfilled:
+            logger.info("Backfilled %d historical event 5-day move(s) with real data", backfilled)
 
     with session_scope() as db:
         result = generate_prediction(db, settings.primary_symbol)

@@ -11,6 +11,14 @@ Single-stock events (Tesla, Nvidia, Meta) are idiosyncratic / company-
 specific - matching one of their categories is a much weaker analogue for a
 broad-index call than the index-level events, and the predictor should
 (and does) weight them accordingly.
+
+Each row's `symbol` records which real symbol its numbers came from. An
+event seeded less than 5 real trading days ago can have
+`market_move_5d_pct=None` because that real number genuinely doesn't exist
+yet - see app/events_backfill.py, which fills it in automatically with real
+data once enough time has actually passed, never by estimating. That
+backfill (not auto-detecting brand-new events, which would risk polluting
+a hand-curated table with noise) is how this table "grows" over time.
 """
 from __future__ import annotations
 
@@ -29,6 +37,7 @@ SEED_EVENTS: list[dict] = [
             "Stovall and others have described as typical for geopolitical shocks: sharp, "
             "short-lived."
         ),
+        "symbol": "^GSPC",
         "market_move_1d_pct": 1.50,  # S&P 500: computed from real data below
         "market_move_5d_pct": 3.27,
         "source_note": (
@@ -48,6 +57,7 @@ SEED_EVENTS: list[dict] = [
             "Oct 9 was the first trading reaction. US futures dipped overnight but the S&P 500 "
             "closed slightly positive; defense stocks and energy outperformed."
         ),
+        "symbol": "^GSPC",
         "market_move_1d_pct": 0.63,
         "market_move_5d_pct": 1.51,
         "source_note": (
@@ -66,6 +76,7 @@ SEED_EVENTS: list[dict] = [
             "triggering a regional-banking panic that spread through the following week before a "
             "federal depositor backstop calmed markets."
         ),
+        "symbol": "^GSPC",
         "market_move_1d_pct": -1.45,
         "market_move_5d_pct": -0.04,
         "source_note": (
@@ -86,6 +97,7 @@ SEED_EVENTS: list[dict] = [
             "weekend rate cut to near-zero failed to calm markets. One of the largest single-day "
             "percentage losses on record for both the S&P 500 and NASDAQ."
         ),
+        "symbol": "^GSPC",
         "market_move_1d_pct": -11.98,
         "market_move_5d_pct": -17.47,
         "source_note": (
@@ -104,6 +116,7 @@ SEED_EVENTS: list[dict] = [
             "in; the market rallied on Powell's press-conference tone (signaling 75bp moves "
             "'would not become common'), snapping a 5-session losing streak."
         ),
+        "symbol": "^GSPC",
         "market_move_1d_pct": 1.46,
         "market_move_5d_pct": 1.61,
         "source_note": (
@@ -121,6 +134,7 @@ SEED_EVENTS: list[dict] = [
             "The Fed held rates and its dot plot signaled roughly three rate cuts in 2024, "
             "triggering what the financial press dubbed a 'Santa rally' into year-end."
         ),
+        "symbol": "^GSPC",
         "market_move_1d_pct": 1.37,
         "market_move_5d_pct": 1.18,
         "source_note": (
@@ -132,19 +146,38 @@ SEED_EVENTS: list[dict] = [
         ),
     },
     {
-        "event_date": datetime(2019, 11, 22, tzinfo=timezone.utc),
-        "title": "Tesla Cybertruck unveiling - stock reaction",
+        # Replaces the earlier Cybertruck (2019) entry at the user's request,
+        # pointing at a more recent, more specific "flying car" reveal.
+        # event_date is the first TRADING-DAY reaction (Fri 2026-10-16), same
+        # convention as the Hamas entry above (attack Sat Oct 7 2023, entry
+        # dated Mon Oct 9 2023's reaction) - keeps the backfill logic in
+        # app/events_backfill.py simple: always "the day the market actually
+        # responded", not the calendar day of the news itself.
+        "event_date": datetime(2026, 10, 16, tzinfo=timezone.utc),
+        "title": "Tesla reveals a flying Roadster (\"Roadster Rocket\") - stock reaction",
         "category": "product_launch",
         "description": (
-            "Tesla revealed the Cybertruck; the 'unbreakable' window demo cracked live on stage. "
-            "TSLA sold off the next trading day. Idiosyncratic, single-stock event - no meaningful "
-            "broad-market (S&P/NASDAQ) spillover was observed."
+            "Tesla revealed an updated Roadster with a cold-gas-thruster 'flying' version (dubbed "
+            "the Roadster Rocket) at a Thursday-night (2026-10-15) event, demonstrating it driving "
+            "up a ramp, flipping in midair, and landing on its wheels; manufacturing was said to "
+            "start in 2028. Coverage described public reaction as disbelief/skepticism (some "
+            "assuming CGI or a lightweight mockup). Idiosyncratic, single-stock event - no "
+            "broad-market claim is made here."
         ),
-        "market_move_1d_pct": -6.14,
+        "symbol": "TSLA",
+        "market_move_1d_pct": -2.13,
         "market_move_5d_pct": None,
         "source_note": (
-            "Computed from real Yahoo Finance daily closes, TSLA (split-adjusted): 2019-11-21 "
-            "close 23.66 -> 2019-11-22 close 22.20 (-6.14%). This is a SINGLE-STOCK move, not an "
+            "Computed from real Yahoo Finance daily closes, TSLA: 2026-10-15 close 362.44 -> "
+            "2026-10-16 (first trading day after the Thursday-night reveal) close 354.72 (-2.13%). "
+            "The 5-trading-day figure is deliberately left unset, not estimated: as of this entry's "
+            "creation only 2 trading days had elapsed since the event (2026-10-16 and 2026-10-19), "
+            "so a real 5-day close doesn't exist yet. app/events_backfill.py will fill it in "
+            "automatically, with real data, once enough trading days have genuinely passed - not "
+            "estimated or guessed in the meantime. Note the stock actually FELL on reaction, "
+            "despite the stunt - a real, verified counter-example to any assumption that a flashy "
+            "product reveal automatically lifts the stock; skepticism/disbelief in the coverage "
+            "plausibly explains the muted-to-negative reaction. This is a SINGLE-STOCK move, not an "
             "index move - included as the weakest kind of analogue (company-specific product "
             "reveals rarely move the broad market on their own)."
         ),
@@ -158,6 +191,7 @@ SEED_EVENTS: list[dict] = [
             "beat attributed to AI-chip demand. NVDA stock jumped and the broader semiconductor / "
             "mega-cap tech complex rallied in sympathy, lifting the NASDAQ Composite same-day."
         ),
+        "symbol": "NVDA",
         "market_move_1d_pct": 24.37,  # NVDA itself
         "market_move_5d_pct": 28.78,  # NVDA itself
         "source_note": (
@@ -178,6 +212,7 @@ SEED_EVENTS: list[dict] = [
             "hurting ad targeting - erasing roughly $230-250B in market cap in one day, the "
             "largest single-day market-cap loss for any US company at the time."
         ),
+        "symbol": "META",
         "market_move_1d_pct": -26.39,  # META itself
         "market_move_5d_pct": -29.39,  # META itself
         "source_note": (
