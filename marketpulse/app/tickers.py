@@ -94,6 +94,17 @@ _COMPANY_TICKERS: dict[str, str] = {
     "eli lilly": "LLY",
     "ulta beauty": "ULTA",
     "target corp": "TGT",
+    "western digital": "WDC",
+    "seagate": "STX",
+    "applied materials": "AMAT",
+    "texas instruments": "TXN",
+    "lam research": "LRCX",
+    "zoom video": "ZM",
+    "datadog": "DDOG",
+    "crowdstrike": "CRWD",
+    "cloudflare": "NET",
+    "mongodb": "MDB",
+    "airbus": "EADSY",
 }
 
 # Sorted longest-alias-first so "meta platforms" is tried before a shorter
@@ -102,14 +113,31 @@ _COMPANY_TICKERS: dict[str, str] = {
 _SORTED_ALIASES = sorted(_COMPANY_TICKERS.items(), key=lambda kv: -len(kv[0]))
 
 
-def detect_ticker(text: str, fallback_symbol: str) -> str:
-    """Returns the real ticker for the first company name matched in
-    `text` (word-boundary match), or `fallback_symbol` (the configured
-    primary index, e.g. "^IXIC") when no specific company is named - most
-    macro/Fed/geopolitical headlines fall into this case, which is the
-    correct real mapping, not a guess."""
-    lowered = text.lower()
+def _first_match(lowered_text: str) -> str | None:
     for alias, ticker in _SORTED_ALIASES:
-        if re.search(r"\b" + re.escape(alias) + r"\b", lowered):
+        if re.search(r"\b" + re.escape(alias) + r"\b", lowered_text):
             return ticker
+    return None
+
+
+def detect_ticker(title: str, summary: str, fallback_symbol: str) -> str:
+    """Returns the real ticker for the company the article is actually
+    ABOUT, or `fallback_symbol` (the configured primary index, e.g.
+    "^IXIC") when no specific company is named - most macro/Fed/
+    geopolitical headlines fall into this case, which is the correct real
+    mapping, not a guess.
+
+    The title is checked first and, if it names a company, wins outright -
+    a real production case caught this mattering: "Why Western Digital
+    (WDC) Stock Is Up Today" has a summary mentioning "an analyst upgrade
+    for Intel" as incidental context, and a title-blind search picked
+    Intel over the article's actual subject. Only when the title itself
+    names nobody does the summary get checked, as a weaker fallback.
+    """
+    title_match = _first_match(title.lower())
+    if title_match:
+        return title_match
+    summary_match = _first_match(summary.lower())
+    if summary_match:
+        return summary_match
     return fallback_symbol

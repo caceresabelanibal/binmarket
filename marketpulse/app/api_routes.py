@@ -97,7 +97,7 @@ def recent_news(limit: int = 40, db: Session = Depends(get_db)) -> list[NewsItem
             title=r.title, url=r.url, source=r.source, sentiment_score=r.sentiment_score,
             matched_categories=r.matched_categories or [],
             published_at=r.published_at.isoformat() if r.published_at else None,
-            ticker=detect_ticker(f"{r.title}. {r.summary or ''}", settings.primary_symbol),
+            ticker=detect_ticker(r.title, r.summary or "", settings.primary_symbol),
             article_prediction=score_to_direction(r.sentiment_score),
         )
         for r in rows
