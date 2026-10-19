@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MarketPulse - Ingresar</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="login-wrap">
+  <form class="login-card" id="login-form">
+    <h1>MarketPulse</h1>
+    <p>Análisis de mercado - uso interno</p>
+    <input type="text" id="username" placeholder="Usuario" autofocus autocomplete="username">
+    <input type="password" id="password" placeholder="Contraseña" autocomplete="current-password">
+    <button type="submit">Iniciar sesión</button>
+    <div class="login-error" id="error" hidden></div>
+  </form>
+</div>
+<script>
+document.getElementById("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = document.getElementById("username").value;
+  const password = document.getElementById("password").value;
+  const errorEl = document.getElementById("error");
+  errorEl.hidden = true;
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      errorEl.textContent = body.detail || "Error al iniciar sesión";
+      errorEl.hidden = false;
+      return;
+    }
+    window.location.href = "/";
+  } catch (err) {
+    errorEl.textContent = "No se pudo conectar con el servidor";
+    errorEl.hidden = false;
+  }
+});
+</script>
+</body>
+</html>

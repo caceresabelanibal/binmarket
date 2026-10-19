@@ -1,0 +1,60 @@
+# Fully independent from BinMarket's stack: its own project name (so
+# `docker compose` never touches BinMarket's containers/networks/volumes
+# even though both live in the same git repo and the same server), its own
+# Postgres, its own ports. Nothing here references `../shared`,
+# `../backend`, or anything else outside this directory - this whole folder
+# is meant to be portable on its own (build it, `docker save`/`docker push`
+# the resulting image, and it runs anywhere with this compose file + a .env).
+name: marketpulse
+
+services:
+  marketpulse-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${MARKETPULSE_POSTGRES_DB:-marketpulse}
+      POSTGRES_USER: ${MARKETPULSE_POSTGRES_USER:-marketpulse}
+      POSTGRES_PASSWORD: ${MARKETPULSE_POSTGRES_PASSWORD:?set MARKETPULSE_POSTGRES_PASSWORD in .env}
+    volumes:
+      - marketpulse_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MARKETPULSE_POSTGRES_USER:-marketpulse}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  marketpulse-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: marketpulse-app:latest
+    environment:
+      MARKETPULSE_APP_ENV: production
+      MARKETPULSE_SECRET_KEY: ${MARKETPULSE_SECRET_KEY:?set MARKETPULSE_SECRET_KEY in .env}
+      MARKETPULSE_ADMIN_USERNAME: ${MARKETPULSE_ADMIN_USERNAME:-admin}
+      MARKETPULSE_ADMIN_PASSWORD: ${MARKETPULSE_ADMIN_PASSWORD:?set MARKETPULSE_ADMIN_PASSWORD in .env}
+      MARKETPULSE_POSTGRES_HOST: marketpulse-db
+      MARKETPULSE_POSTGRES_PORT: 5432
+      MARKETPULSE_POSTGRES_DB: ${MARKETPULSE_POSTGRES_DB:-marketpulse}
+      MARKETPULSE_POSTGRES_USER: ${MARKETPULSE_POSTGRES_USER:-marketpulse}
+      MARKETPULSE_POSTGRES_PASSWORD: ${MARKETPULSE_POSTGRES_PASSWORD:?set MARKETPULSE_POSTGRES_PASSWORD in .env}
+      MARKETPULSE_INGEST_INTERVAL_MINUTES: ${MARKETPULSE_INGEST_INTERVAL_MINUTES:-30}
+      MARKETPULSE_PRIMARY_SYMBOL: ${MARKETPULSE_PRIMARY_SYMBOL:-^IXIC}
+      MARKETPULSE_PRIMARY_SYMBOL_LABEL: ${MARKETPULSE_PRIMARY_SYMBOL_LABEL:-NASDAQ Composite}
+    ports:
+      # Deliberately different from BinMarket's 8000/5173 so both stacks can
+      # run on the same host at once without a port clash.
+      - "${MARKETPULSE_HOST_PORT:-8300}:8000"
+    depends_on:
+      marketpulse-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  marketpulse_db_data:
