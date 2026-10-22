@@ -60,19 +60,63 @@
       Un ticker aparece acá en cuanto tiene al menos 2 noticias reales propias en las últimas 48hs - cada uno tiene su
       propia predicción (sentimiento + analogías históricas + tendencia real de precio), no sólo el índice general.
     </p>
+    <div class="filter-row">
+      <label>Ticker <input type="text" id="outlooks-filter-ticker" placeholder="ej: TSLA"></label>
+      <label>Dirección
+        <select id="outlooks-filter-direction">
+          <option value="">Todas</option>
+          <option value="LONG">LONG</option>
+          <option value="SHORT">SHORT</option>
+          <option value="NO_TRADE">NO_TRADE</option>
+        </select>
+      </label>
+      <button id="outlooks-filter-apply">Filtrar</button>
+      <button id="outlooks-filter-clear">Limpiar</button>
+    </div>
     <table>
       <thead><tr><th>Ticker</th><th>Dirección</th><th>Confianza</th><th>Sentimiento</th><th>Artículos</th><th>Calculado</th></tr></thead>
       <tbody id="outlooks-rows"></tbody>
     </table>
+    <div class="pagination">
+      <span id="outlooks-page-info"></span>
+      <div style="display:flex; gap:8px;">
+        <button id="outlooks-prev">Anterior</button>
+        <button id="outlooks-next">Siguiente</button>
+      </div>
+    </div>
   </div>
 
   <div class="card">
     <h2>Backtest - ¿acertó la dirección?</h2>
     <div class="outlook-grid" id="backtest-summary"></div>
-    <table style="margin-top:14px;">
+    <div class="filter-row" style="margin-top:14px;">
+      <label>Ticker <input type="text" id="backtest-filter-ticker" placeholder="ej: TSLA"></label>
+      <label>Resultado
+        <select id="backtest-filter-verdict">
+          <option value="">Todos</option>
+          <option value="CORRECT">CORRECT</option>
+          <option value="WRONG">WRONG</option>
+          <option value="PENDING">PENDING</option>
+          <option value="NO_TRADE">NO_TRADE</option>
+          <option value="NO_DATA">NO_DATA</option>
+        </select>
+      </label>
+      <label>Desde <input type="date" id="backtest-filter-from"></label>
+      <label>Hasta <input type="date" id="backtest-filter-to"></label>
+      <button id="backtest-filter-apply">Filtrar</button>
+      <button id="backtest-filter-clear">Limpiar</button>
+    </div>
+    <table>
       <thead><tr><th>Ticker</th><th>Fecha</th><th>Predijo</th><th>Confianza</th><th>Movimiento real</th><th>Resultado</th></tr></thead>
       <tbody id="backtest-rows"></tbody>
     </table>
+    <div class="pagination">
+      <span id="backtest-page-info"></span>
+      <div style="display:flex; gap:8px;">
+        <button id="backtest-prev">Anterior</button>
+        <button id="backtest-next">Siguiente</button>
+      </div>
+    </div>
   </div>
 
   <div class="card">
@@ -133,12 +177,23 @@ async function loadOutlook(fresh) {
   document.getElementById("as-of").textContent = new Date(d.as_of).toLocaleString("es-AR");
 }
 
+const outlooksState = { page: 1, page_size: 5, ticker: "", direction: "" };
+
+function renderPageInfo(elId, page, page_size, total) {
+  const totalPages = Math.max(1, Math.ceil(total / page_size));
+  document.getElementById(elId).textContent =
+    total === 0 ? "Sin resultados" : `Página ${page} de ${totalPages} (${total} en total)`;
+}
+
 async function loadOutlooksAll() {
-  const res = await fetch("/api/v1/outlooks");
-  const items = await res.json();
+  const params = new URLSearchParams({ page: outlooksState.page, page_size: outlooksState.page_size });
+  if (outlooksState.ticker) params.set("ticker", outlooksState.ticker);
+  if (outlooksState.direction) params.set("direction", outlooksState.direction);
+  const res = await fetch("/api/v1/outlooks?" + params.toString());
+  const d = await res.json();
   const tbody = document.getElementById("outlooks-rows");
   tbody.innerHTML = "";
-  for (const item of items) {
+  for (const item of d.items) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><strong>${item.symbol}</strong><div class="muted" style="margin-top:2px;">${item.symbol_label}</div></td>
@@ -150,9 +205,13 @@ async function loadOutlooksAll() {
     `;
     tbody.appendChild(tr);
   }
-  if (items.length === 0) {
+  if (d.items.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6" class="muted">Todavía no hay predicciones por ticker.</td></tr>';
   }
+  outlooksState.page = d.page;
+  renderPageInfo("outlooks-page-info", d.page, d.page_size, d.total);
+  document.getElementById("outlooks-prev").disabled = d.page <= 1;
+  document.getElementById("outlooks-next").disabled = d.page * d.page_size >= d.total;
 }
 
 async function loadNews() {
@@ -208,8 +267,15 @@ async function loadAnalogues() {
   }
 }
 
+const backtestState = { page: 1, page_size: 5, ticker: "", verdict: "", date_from: "", date_to: "" };
+
 async function loadBacktest() {
-  const res = await fetch("/api/v1/backtest");
+  const params = new URLSearchParams({ page: backtestState.page, page_size: backtestState.page_size });
+  if (backtestState.ticker) params.set("ticker", backtestState.ticker);
+  if (backtestState.verdict) params.set("verdict", backtestState.verdict);
+  if (backtestState.date_from) params.set("date_from", backtestState.date_from);
+  if (backtestState.date_to) params.set("date_to", backtestState.date_to);
+  const res = await fetch("/api/v1/backtest?" + params.toString());
   const d = await res.json();
   const s = d.summary;
   const summaryEl = document.getElementById("backtest-summary");
@@ -219,9 +285,10 @@ async function loadBacktest() {
     <div><div class="stat-label">Correctas / Incorrectas</div><div class="stat-value"><span class="pos">${s.correct}</span> / <span class="neg">${s.wrong}</span></div></div>
     <div><div class="stat-label">Pendientes (sin horizonte cumplido)</div><div class="stat-value">${s.pending}</div></div>
   `;
+  const page = d.predictions;
   const tbody = document.getElementById("backtest-rows");
   tbody.innerHTML = "";
-  for (const v of d.predictions) {
+  for (const v of page.items) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><strong>${v.symbol}</strong></td>
@@ -233,9 +300,13 @@ async function loadBacktest() {
     `;
     tbody.appendChild(tr);
   }
-  if (d.predictions.length === 0) {
+  if (page.items.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6" class="muted">Todavía no hay predicciones registradas.</td></tr>';
   }
+  backtestState.page = page.page;
+  renderPageInfo("backtest-page-info", page.page, page.page_size, page.total);
+  document.getElementById("backtest-prev").disabled = page.page <= 1;
+  document.getElementById("backtest-next").disabled = page.page * page.page_size >= page.total;
 }
 
 async function loadAll(fresh) {
@@ -258,6 +329,49 @@ document.getElementById("refresh-btn").addEventListener("click", async () => {
 document.getElementById("logout-btn").addEventListener("click", async () => {
   await fetch("/api/auth/logout", { method: "POST" });
   window.location.href = "/login";
+});
+
+document.getElementById("outlooks-filter-apply").addEventListener("click", () => {
+  outlooksState.ticker = document.getElementById("outlooks-filter-ticker").value.trim();
+  outlooksState.direction = document.getElementById("outlooks-filter-direction").value;
+  outlooksState.page = 1;
+  loadOutlooksAll();
+});
+document.getElementById("outlooks-filter-clear").addEventListener("click", () => {
+  document.getElementById("outlooks-filter-ticker").value = "";
+  document.getElementById("outlooks-filter-direction").value = "";
+  outlooksState.ticker = ""; outlooksState.direction = ""; outlooksState.page = 1;
+  loadOutlooksAll();
+});
+document.getElementById("outlooks-prev").addEventListener("click", () => {
+  if (outlooksState.page > 1) { outlooksState.page -= 1; loadOutlooksAll(); }
+});
+document.getElementById("outlooks-next").addEventListener("click", () => {
+  outlooksState.page += 1; loadOutlooksAll();
+});
+
+document.getElementById("backtest-filter-apply").addEventListener("click", () => {
+  backtestState.ticker = document.getElementById("backtest-filter-ticker").value.trim();
+  backtestState.verdict = document.getElementById("backtest-filter-verdict").value;
+  backtestState.date_from = document.getElementById("backtest-filter-from").value;
+  backtestState.date_to = document.getElementById("backtest-filter-to").value;
+  backtestState.page = 1;
+  loadBacktest();
+});
+document.getElementById("backtest-filter-clear").addEventListener("click", () => {
+  document.getElementById("backtest-filter-ticker").value = "";
+  document.getElementById("backtest-filter-verdict").value = "";
+  document.getElementById("backtest-filter-from").value = "";
+  document.getElementById("backtest-filter-to").value = "";
+  backtestState.ticker = ""; backtestState.verdict = ""; backtestState.date_from = ""; backtestState.date_to = "";
+  backtestState.page = 1;
+  loadBacktest();
+});
+document.getElementById("backtest-prev").addEventListener("click", () => {
+  if (backtestState.page > 1) { backtestState.page -= 1; loadBacktest(); }
+});
+document.getElementById("backtest-next").addEventListener("click", () => {
+  backtestState.page += 1; loadBacktest();
 });
 
 requireAuth().then(() => loadAll(false));

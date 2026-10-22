@@ -83,12 +83,26 @@ def outlook(symbol: str | None = None, fresh: bool = False, db: Session = Depend
     return _to_outlook_response(row)
 
 
-@router.get("/outlooks", response_model=list[OutlookResponse])
-def all_outlooks(db: Session = Depends(get_db)) -> list[OutlookResponse]:
+class PaginatedOutlooksResponse(BaseModel):
+    items: list[OutlookResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+@router.get("/outlooks", response_model=PaginatedOutlooksResponse)
+def all_outlooks(
+    page: int = 1, page_size: int = 5,
+    ticker: str | None = None, direction: str | None = None,
+    db: Session = Depends(get_db),
+) -> PaginatedOutlooksResponse:
     """The latest stored prediction for EVERY ticker MarketPulse currently
     tracks (requested directly by the user: predict every real ticker the
     news actually names, not just one configured index) - one row per
-    distinct symbol, most recent first by confidence."""
+    distinct symbol, most recent first by confidence. Paginated (5 per page
+    by default) with optional `ticker` (substring match against the symbol
+    or its display label) and `direction` filters, also requested directly
+    by the user so a growing ticker list doesn't turn into one giant page."""
     recent_cutoff_days = 2  # comfortably covers at least a few ingest cycles
     cutoff = datetime.now(timezone.utc) - timedelta(days=recent_cutoff_days)
     rows = (
@@ -103,8 +117,22 @@ def all_outlooks(db: Session = Depends(get_db)) -> list[OutlookResponse]:
             latest_per_symbol[row.symbol] = row
 
     responses = [_to_outlook_response(row) for row in latest_per_symbol.values()]
+
+    if ticker:
+        needle = ticker.strip().upper()
+        responses = [r for r in responses if needle in r.symbol.upper() or needle in r.symbol_label.upper()]
+    if direction:
+        responses = [r for r in responses if r.direction == direction.strip().upper()]
+
     responses.sort(key=lambda r: r.confidence_pct, reverse=True)
-    return responses
+
+    page = max(page, 1)
+    page_size = max(1, min(page_size, 100))
+    total = len(responses)
+    start = (page - 1) * page_size
+    return PaginatedOutlooksResponse(
+        items=responses[start:start + page_size], total=total, page=page, page_size=page_size,
+    )
 
 
 class NewsItemResponse(BaseModel):
@@ -166,13 +194,50 @@ def historical_analogues(db: Session = Depends(get_db)) -> list[HistoricalEventR
 
 
 @router.get("/backtest")
-def backtest(symbol: str | None = None, db: Session = Depends(get_db)) -> dict:
-    """`symbol` omitted scores every ticker MarketPulse has predictions for
-    (the default - see evaluate_predictions); pass it to filter to one."""
-    verdicts = evaluate_predictions(db, symbol)
+def backtest(
+    ticker: str | None = None, verdict: str | None = None,
+    date_from: str | None = None, date_to: str | None = None,
+    page: int = 1, page_size: int = 5,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Scores every ticker MarketPulse has predictions for, then applies
+    whatever filters are given (requested directly by the user: search by
+    ticker, by date, by result) before paginating (5 per page by default).
+    `summary` is computed over the full FILTERED set, not just the current
+    page, so the hit rate shown always matches what's actually being
+    looked at - filter to one ticker and the stats become that ticker's
+    own real track record, not the page-slice's.
+
+    `ticker`/date range are pushed down into the SQL query (evaluate_predictions)
+    rather than pulled into Python first - at 40+ tickers x a 30-min cadence
+    this table grows fast, and a date search should reach further back than
+    the normal 14-day default, not be silently capped by it.
+    """
+    date_from_dt = datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc) if date_from else None
+    # Inclusive of the whole end date, not just midnight at its start.
+    date_to_dt = (
+        datetime.fromisoformat(date_to).replace(tzinfo=timezone.utc) + timedelta(days=1) if date_to else None
+    )
+
+    verdicts = evaluate_predictions(db, symbol=ticker, date_from=date_from_dt, date_to=date_to_dt)
+
+    if verdict:
+        wanted = verdict.strip().upper()
+        verdicts = [v for v in verdicts if v.verdict == wanted]
+
+    summary = summarize_verdicts(verdicts)
+
+    page = max(page, 1)
+    page_size = max(1, min(page_size, 100))
+    total = len(verdicts)
+    start = (page - 1) * page_size
+    page_items = verdicts[start:start + page_size]
+
     return {
-        "summary": summarize_verdicts(verdicts),
-        "predictions": [v.__dict__ for v in verdicts],
+        "summary": summary,
+        "predictions": {
+            "items": [v.__dict__ for v in page_items], "total": total, "page": page, "page_size": page_size,
+        },
     }
 
 

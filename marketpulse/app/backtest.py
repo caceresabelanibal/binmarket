@@ -36,7 +36,13 @@ def _closest_price(prices: list[MarketPriceDaily], target: datetime) -> MarketPr
     return min(candidates, key=lambda p: abs((p.price_date - target).total_seconds()))
 
 
-def evaluate_predictions(db: Session, symbol: str | None = None, days_back: int = 14) -> list[PredictionVerdict]:
+def evaluate_predictions(
+    db: Session,
+    symbol: str | None = None,
+    days_back: int = 14,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+) -> list[PredictionVerdict]:
     """Real production bug this replaced: predictions are generated every
     `ingest_interval_minutes` (30 by default) and need `horizon_hours` (48)
     to actually elapse before they can be scored - but the old
@@ -49,18 +55,30 @@ def evaluate_predictions(db: Session, symbol: str | None = None, days_back: int 
     `symbol=None` evaluates every ticker that has predictions (requested
     directly by the user - MarketPulse now tracks whatever real tickers the
     news actually names, not just one configured index), each scored
-    against its OWN cached price history.
+    against its OWN cached price history. `symbol` does a case-insensitive
+    SUBSTRING match (not exact), matching the "buscar por ticker" the user
+    asked for in the dashboard filter. `date_from`/`date_to` override the
+    `days_back` default when given, so a deliberate date-range search isn't
+    silently capped at 14 days - with 40+ tickers at a 30-min cadence this
+    table grows fast, so filtering happens in SQL, not after pulling
+    everything into Python.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
-    query = db.query(Prediction).filter(Prediction.created_at >= cutoff)
+    query = db.query(Prediction)
+    if date_from is not None:
+        query = query.filter(Prediction.created_at >= date_from)
+    else:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+        query = query.filter(Prediction.created_at >= cutoff)
+    if date_to is not None:
+        query = query.filter(Prediction.created_at < date_to)
     if symbol is not None:
-        query = query.filter(Prediction.symbol == symbol)
+        query = query.filter(Prediction.symbol.ilike(f"%{symbol}%"))
     predictions = query.order_by(Prediction.created_at.desc()).all()
+    if not predictions:
+        return []
 
-    price_query = db.query(MarketPriceDaily)
-    if symbol is not None:
-        price_query = price_query.filter(MarketPriceDaily.symbol == symbol)
-    all_prices = price_query.all()
+    matched_symbols = {p.symbol for p in predictions}
+    all_prices = db.query(MarketPriceDaily).filter(MarketPriceDaily.symbol.in_(matched_symbols)).all()
     prices_by_symbol: dict[str, list[MarketPriceDaily]] = {}
     for p in all_prices:
         prices_by_symbol.setdefault(p.symbol, []).append(p)
