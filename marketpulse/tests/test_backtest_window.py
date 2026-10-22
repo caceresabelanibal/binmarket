@@ -91,3 +91,43 @@ def test_predictions_outside_the_window_are_excluded(db):
     verdicts = evaluate_predictions(db, symbol, days_back=14)
 
     assert verdicts == []
+
+
+def test_symbol_filter_is_a_case_insensitive_substring_match(db):
+    """Dashboard filter requirement: typing part of a ticker should find
+    it, not require the exact full symbol."""
+    now = datetime.now(timezone.utc)
+    db.add(_prediction("TSLA", now, "NO_TRADE"))
+    db.add(_prediction("NVDA", now, "NO_TRADE"))
+    db.commit()
+
+    verdicts = evaluate_predictions(db, symbol="tsl")
+
+    assert [v.symbol for v in verdicts] == ["TSLA"]
+
+
+def test_date_from_overrides_the_days_back_default(db):
+    """A deliberate date-range search must reach further back than the
+    normal 14-day default, not be silently capped by it."""
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=60)
+    db.add(_prediction("^IXIC", old, "NO_TRADE"))
+    db.commit()
+
+    assert evaluate_predictions(db, days_back=14) == []  # the old default would miss it
+
+    verdicts = evaluate_predictions(db, date_from=now - timedelta(days=90))
+    assert len(verdicts) == 1
+
+
+def test_date_to_is_inclusive_of_the_given_day(db):
+    now = datetime.now(timezone.utc)
+    db.add(_prediction("^IXIC", now - timedelta(days=5), "NO_TRADE"))
+    db.add(_prediction("^IXIC", now - timedelta(days=1), "NO_TRADE"))
+    db.commit()
+
+    verdicts = evaluate_predictions(
+        db, date_from=now - timedelta(days=6), date_to=now - timedelta(days=3),
+    )
+
+    assert len(verdicts) == 1
