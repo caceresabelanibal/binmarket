@@ -27,6 +27,7 @@ from .models import HistoricalEvent, NewsArticle, Prediction
 from .prices import fetch_daily_closes
 
 NEWS_LOOKBACK_HOURS = 48
+ARTICLE_QUERY_SAFETY_CAP = 5000
 # Below this |score|, the signal is too weak/mixed to act on - NO_TRADE, not
 # a coin-flip LONG or SHORT. Shared with app/tickers.py's per-article call
 # (via score_to_direction below) so a single headline's own sentiment score
@@ -100,7 +101,13 @@ def generate_prediction(db: Session, symbol: str, horizon_hours: int = 48) -> Pr
         db.query(NewsArticle)
         .filter(NewsArticle.fetched_at >= cutoff)
         .order_by(NewsArticle.fetched_at.desc())
-        .limit(300)
+        # Real production bug: an earlier .limit(300) silently truncated this
+        # once real volume grew past it (confirmed 1,421 real articles in a
+        # 48h window within days of deployment), making "article_count" look
+        # permanently stuck and hiding real growth from the dashboard. This
+        # cap is now a generous safety net, not the expected ceiling - fetched_at
+        # is indexed, so a few thousand rows is still cheap.
+        .limit(ARTICLE_QUERY_SAFETY_CAP)
         .all()
     )
 

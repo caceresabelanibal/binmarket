@@ -12,7 +12,7 @@ import logging
 from .config import settings
 from .db import session_scope
 from .events_backfill import backfill_pending_event_moves
-from .ingest import ingest_all_feeds, refresh_price_cache
+from .ingest import ingest_all_feeds, prune_old_data, refresh_price_cache
 from .predictor import generate_prediction, persist_prediction
 
 logger = logging.getLogger("marketpulse.scheduler")
@@ -25,6 +25,11 @@ def run_cycle_once() -> None:
 
     with session_scope() as db:
         refresh_price_cache(db, settings.primary_symbol)
+
+    with session_scope() as db:
+        pruned_articles, pruned_predictions = prune_old_data(db)
+        if pruned_articles or pruned_predictions:
+            logger.info("Pruned %d old articles, %d old predictions", pruned_articles, pruned_predictions)
 
     with session_scope() as db:
         backfilled = backfill_pending_event_moves(db)

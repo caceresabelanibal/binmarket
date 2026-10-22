@@ -141,11 +141,12 @@ def trigger_ingest_now(db: Session = Depends(get_db), _: User = Depends(get_curr
     """Manual trigger for the dashboard's "Actualizar ahora" button - runs
     one full cycle synchronously instead of waiting for the scheduler."""
     from .events_backfill import backfill_pending_event_moves
-    from .ingest import ingest_all_feeds, refresh_price_cache
+    from .ingest import ingest_all_feeds, prune_old_data, refresh_price_cache
     from .predictor import persist_prediction
 
     inserted = ingest_all_feeds(db)
     refresh_price_cache(db, settings.primary_symbol)
+    prune_old_data(db)
     backfill_pending_event_moves(db)
     result = generate_prediction(db, settings.primary_symbol)
     row = persist_prediction(db, settings.primary_symbol, 48, result)

@@ -1,17 +1,28 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from .feeds import FEEDS, fetch_feed
-from .models import MarketPriceDaily, NewsArticle
+from .models import MarketPriceDaily, NewsArticle, Prediction
 from .prices import fetch_daily_closes
 from .sentiment import score_text
 
 logger = logging.getLogger("marketpulse.ingest")
+
+# Real production incident this heads off: news_articles reached 2,041 rows
+# within 3 days of deployment with no retention at all, which is exactly
+# what made generate_prediction's old hardcoded query limit start silently
+# truncating real data (see predictor.py). Articles only matter for the
+# 48h-lookback prediction anyway; keeping 14 days is generous headroom for
+# debugging/review without the table growing forever. Predictions are kept
+# much longer (backtest.py's whole point is a long real track record).
+NEWS_ARTICLE_RETENTION_DAYS = 14
+PREDICTION_RETENTION_DAYS = 180
 
 
 def _parse_published(raw: str | None) -> datetime | None:
@@ -75,3 +86,16 @@ def refresh_price_cache(db: Session, symbol: str) -> int:
         inserted += 1
     db.commit()
     return inserted
+
+
+def prune_old_data(db: Session) -> tuple[int, int]:
+    """No Redis/gate needed here (unlike BinMarket's equivalent) - both
+    deletes are cheap, indexed, and idempotent, so running them every
+    ingest cycle (every `ingest_interval_minutes`) is simplest and safe."""
+    news_cutoff = datetime.now(timezone.utc) - timedelta(days=NEWS_ARTICLE_RETENTION_DAYS)
+    prediction_cutoff = datetime.now(timezone.utc) - timedelta(days=PREDICTION_RETENTION_DAYS)
+
+    news_result = db.execute(delete(NewsArticle).where(NewsArticle.fetched_at < news_cutoff))
+    prediction_result = db.execute(delete(Prediction).where(Prediction.created_at < prediction_cutoff))
+    db.commit()
+    return news_result.rowcount or 0, prediction_result.rowcount or 0

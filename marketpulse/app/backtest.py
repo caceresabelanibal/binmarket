@@ -35,12 +35,21 @@ def _closest_price(prices: list[MarketPriceDaily], target: datetime) -> MarketPr
     return min(candidates, key=lambda p: abs((p.price_date - target).total_seconds()))
 
 
-def evaluate_predictions(db: Session, symbol: str, limit: int = 60) -> list[PredictionVerdict]:
+def evaluate_predictions(db: Session, symbol: str, days_back: int = 14) -> list[PredictionVerdict]:
+    """Real production bug this replaced: predictions are generated every
+    `ingest_interval_minutes` (30 by default) and need `horizon_hours` (48)
+    to actually elapse before they can be scored - but the old
+    `limit(60)` (a row count, not a time window) only ever reached back
+    ~30 hours (60 * 30min), always LESS than the 48h horizon. The backtest
+    could never show a single CORRECT/WRONG verdict, no matter how long the
+    service ran - every prediction was perpetually "too recent" by
+    construction. A real time window fixes this structurally.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
     predictions = (
         db.query(Prediction)
-        .filter(Prediction.symbol == symbol)
+        .filter(Prediction.symbol == symbol, Prediction.created_at >= cutoff)
         .order_by(Prediction.created_at.desc())
-        .limit(limit)
         .all()
     )
     prices = db.query(MarketPriceDaily).filter(MarketPriceDaily.symbol == symbol).all()
