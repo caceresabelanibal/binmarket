@@ -120,6 +120,18 @@ def _first_match(lowered_text: str) -> str | None:
     return None
 
 
+def label_for_ticker(ticker: str) -> str:
+    """A readable display name for a ticker, reusing the same curated alias
+    table (free - no separate lookup to maintain). Falls back to the bare
+    ticker symbol when it isn't one of the curated companies (e.g. the
+    configured primary index symbol, or a real ticker this table simply
+    doesn't carry an alias for yet)."""
+    for alias, sym in _COMPANY_TICKERS.items():
+        if sym == ticker:
+            return alias.title()
+    return ticker
+
+
 def detect_ticker(title: str, summary: str, fallback_symbol: str) -> str:
     """Returns the real ticker for the company the article is actually
     ABOUT, or `fallback_symbol` (the configured primary index, e.g.

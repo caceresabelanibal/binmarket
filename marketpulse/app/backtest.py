@@ -17,6 +17,7 @@ from .models import MarketPriceDaily, Prediction
 @dataclass
 class PredictionVerdict:
     prediction_id: str
+    symbol: str
     created_at: str
     direction: str
     confidence_pct: float
@@ -35,7 +36,7 @@ def _closest_price(prices: list[MarketPriceDaily], target: datetime) -> MarketPr
     return min(candidates, key=lambda p: abs((p.price_date - target).total_seconds()))
 
 
-def evaluate_predictions(db: Session, symbol: str, days_back: int = 14) -> list[PredictionVerdict]:
+def evaluate_predictions(db: Session, symbol: str | None = None, days_back: int = 14) -> list[PredictionVerdict]:
     """Real production bug this replaced: predictions are generated every
     `ingest_interval_minutes` (30 by default) and need `horizon_hours` (48)
     to actually elapse before they can be scored - but the old
@@ -44,19 +45,30 @@ def evaluate_predictions(db: Session, symbol: str, days_back: int = 14) -> list[
     could never show a single CORRECT/WRONG verdict, no matter how long the
     service ran - every prediction was perpetually "too recent" by
     construction. A real time window fixes this structurally.
+
+    `symbol=None` evaluates every ticker that has predictions (requested
+    directly by the user - MarketPulse now tracks whatever real tickers the
+    news actually names, not just one configured index), each scored
+    against its OWN cached price history.
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
-    predictions = (
-        db.query(Prediction)
-        .filter(Prediction.symbol == symbol, Prediction.created_at >= cutoff)
-        .order_by(Prediction.created_at.desc())
-        .all()
-    )
-    prices = db.query(MarketPriceDaily).filter(MarketPriceDaily.symbol == symbol).all()
+    query = db.query(Prediction).filter(Prediction.created_at >= cutoff)
+    if symbol is not None:
+        query = query.filter(Prediction.symbol == symbol)
+    predictions = query.order_by(Prediction.created_at.desc()).all()
+
+    price_query = db.query(MarketPriceDaily)
+    if symbol is not None:
+        price_query = price_query.filter(MarketPriceDaily.symbol == symbol)
+    all_prices = price_query.all()
+    prices_by_symbol: dict[str, list[MarketPriceDaily]] = {}
+    for p in all_prices:
+        prices_by_symbol.setdefault(p.symbol, []).append(p)
 
     now = datetime.now(timezone.utc)
     verdicts: list[PredictionVerdict] = []
     for p in predictions:
+        prices = prices_by_symbol.get(p.symbol, [])
         created_at = p.created_at if p.created_at.tzinfo else p.created_at.replace(tzinfo=timezone.utc)
         horizon_time = created_at + timedelta(hours=p.horizon_hours)
 
@@ -65,14 +77,14 @@ def evaluate_predictions(db: Session, symbol: str, days_back: int = 14) -> list[
 
         if p.direction == "NO_TRADE":
             verdicts.append(PredictionVerdict(
-                p.id, created_at.isoformat(), p.direction, p.confidence_pct,
+                p.id, p.symbol, created_at.isoformat(), p.direction, p.confidence_pct,
                 entry_price, None, None, "NO_TRADE",
             ))
             continue
 
         if now < horizon_time:
             verdicts.append(PredictionVerdict(
-                p.id, created_at.isoformat(), p.direction, p.confidence_pct,
+                p.id, p.symbol, created_at.isoformat(), p.direction, p.confidence_pct,
                 entry_price, None, None, "PENDING",
             ))
             continue
@@ -80,7 +92,7 @@ def evaluate_predictions(db: Session, symbol: str, days_back: int = 14) -> list[
         horizon_price_row = _closest_price(prices, horizon_time)
         if not entry_price_row or not horizon_price_row:
             verdicts.append(PredictionVerdict(
-                p.id, created_at.isoformat(), p.direction, p.confidence_pct,
+                p.id, p.symbol, created_at.isoformat(), p.direction, p.confidence_pct,
                 entry_price, horizon_price_row.close if horizon_price_row else None, None, "NO_DATA",
             ))
             continue
@@ -91,7 +103,7 @@ def evaluate_predictions(db: Session, symbol: str, days_back: int = 14) -> list[
         verdict = "CORRECT" if predicted_up == actual_up else "WRONG"
 
         verdicts.append(PredictionVerdict(
-            p.id, created_at.isoformat(), p.direction, p.confidence_pct,
+            p.id, p.symbol, created_at.isoformat(), p.direction, p.confidence_pct,
             entry_price_row.close, horizon_price_row.close, round(actual_move_pct, 2), verdict,
         ))
 

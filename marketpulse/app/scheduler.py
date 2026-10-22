@@ -2,7 +2,9 @@
 (no separate worker container - see the Dockerfile/compose comments for
 why one container is deliberate here). Every `ingest_interval_minutes`:
 fetch feeds, refresh the price cache, recompute and store a fresh
-prediction snapshot.
+prediction snapshot - one per real ticker currently in the news, not just
+the one configured primary symbol (see predictor.py's
+generate_all_predictions).
 """
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ from .config import settings
 from .db import session_scope
 from .events_backfill import backfill_pending_event_moves
 from .ingest import ingest_all_feeds, prune_old_data, refresh_price_cache
-from .predictor import generate_prediction, persist_prediction
+from .predictor import generate_all_predictions, persist_prediction
 
 logger = logging.getLogger("marketpulse.scheduler")
 
@@ -22,9 +24,6 @@ def run_cycle_once() -> None:
     with session_scope() as db:
         inserted = ingest_all_feeds(db)
         logger.info("Ingested %d new articles", inserted)
-
-    with session_scope() as db:
-        refresh_price_cache(db, settings.primary_symbol)
 
     with session_scope() as db:
         pruned_articles, pruned_predictions = prune_old_data(db)
@@ -37,12 +36,22 @@ def run_cycle_once() -> None:
             logger.info("Backfilled %d historical event 5-day move(s) with real data", backfilled)
 
     with session_scope() as db:
-        result = generate_prediction(db, settings.primary_symbol)
-        prediction = persist_prediction(db, settings.primary_symbol, 48, result)
-        logger.info(
-            "New prediction for %s: %s (confidence %.1f%%, %d articles)",
-            settings.primary_symbol, prediction.direction, prediction.confidence_pct, result.article_count,
-        )
+        results = generate_all_predictions(db)
+
+    # Refresh the price cache for every ticker that got a prediction this
+    # cycle, not just the primary symbol - the backtest can only ever score
+    # a ticker it has a real cached close for.
+    with session_scope() as db:
+        for symbol in results:
+            refresh_price_cache(db, symbol)
+
+    with session_scope() as db:
+        for symbol, result in results.items():
+            prediction = persist_prediction(db, symbol, 48, result)
+            logger.info(
+                "New prediction for %s: %s (confidence %.1f%%, %d articles)",
+                symbol, prediction.direction, prediction.confidence_pct, result.article_count,
+            )
 
 
 async def run_forever(stop_event: asyncio.Event) -> None:

@@ -1,10 +1,21 @@
 """The prediction engine: combines (1) recency-weighted news sentiment,
-(2) historical-analogue priors from matched event categories, and (3) the
-recent real price trend into a directional call - LONG / SHORT / NO_TRADE -
-for the next `horizon_hours`.
+(2) historical-analogue priors from matched event categories (boosted when a
+historical event is about the SAME ticker), and (3) the recent real price
+trend into a directional call - LONG / SHORT / NO_TRADE - for the next
+`horizon_hours`.
 
-Explicitly optimized to predict DIRECTION, not magnitude, per the user's
-own framing: the output is a sign and a confidence, not a target price. The
+Tracks every ticker that real news actually names, not just one configured
+index (requested directly by the user: "no se la noticia a que ticket le va
+a impactar... necesito que mires la noticia, entiendas a que ticket le va a
+impactar, y haga la predicción basado en el historial"). `generate_all_predictions`
+groups the same 48h article window by the ticker `app/tickers.py` detects
+per article, and runs one full blend per ticker with enough real volume
+behind it - the configured primary symbol (general/macro news with no
+specific company named) is always included, even on a quiet news day, since
+that's the main index-level call other systems may depend on.
+
+Explicitly optimized to predict DIRECTION, not magnitude, per the user's own
+framing: the output is a sign and a confidence, not a target price. The
 whole computation is a transparent weighted sum, not a model with hidden
 weights - `reasoning` always carries every number and every contributing
 article/event that went into the final call, the same "never a black box"
@@ -23,11 +34,18 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
+from .config import settings
 from .models import HistoricalEvent, NewsArticle, Prediction
 from .prices import fetch_daily_closes
+from .tickers import detect_ticker
 
 NEWS_LOOKBACK_HOURS = 48
 ARTICLE_QUERY_SAFETY_CAP = 5000
+# A ticker needs at least this many real articles in the window before it
+# gets its own prediction - one stray headline about a company is not a
+# real signal. The configured primary symbol (general/macro news) is exempt
+# from this floor - see generate_all_predictions.
+MIN_ARTICLES_PER_TICKER = 2
 # Below this |score|, the signal is too weak/mixed to act on - NO_TRADE, not
 # a coin-flip LONG or SHORT. Shared with app/tickers.py's per-article call
 # (via score_to_direction below) so a single headline's own sentiment score
@@ -63,6 +81,7 @@ class AnalogueMatch:
     event_date: str
     market_move_1d_pct: float | None
     market_move_5d_pct: float | None
+    same_ticker: bool
 
 
 @dataclass
@@ -95,9 +114,9 @@ def _recent_trend_pct(symbol: str) -> float | None:
     return (last - first) / first * 100
 
 
-def generate_prediction(db: Session, symbol: str, horizon_hours: int = 48) -> PredictionResult:
+def _fetch_recent_articles(db: Session) -> list[NewsArticle]:
     cutoff = datetime.now(timezone.utc) - timedelta(hours=NEWS_LOOKBACK_HOURS)
-    articles = (
+    return (
         db.query(NewsArticle)
         .filter(NewsArticle.fetched_at >= cutoff)
         .order_by(NewsArticle.fetched_at.desc())
@@ -105,12 +124,26 @@ def generate_prediction(db: Session, symbol: str, horizon_hours: int = 48) -> Pr
         # once real volume grew past it (confirmed 1,421 real articles in a
         # 48h window within days of deployment), making "article_count" look
         # permanently stuck and hiding real growth from the dashboard. This
-        # cap is now a generous safety net, not the expected ceiling - fetched_at
-        # is indexed, so a few thousand rows is still cheap.
+        # cap is now a generous safety net, not the expected ceiling -
+        # fetched_at is indexed, so a few thousand rows is still cheap.
         .limit(ARTICLE_QUERY_SAFETY_CAP)
         .all()
     )
 
+
+def group_articles_by_ticker(articles: list[NewsArticle]) -> dict[str, list[NewsArticle]]:
+    groups: dict[str, list[NewsArticle]] = {}
+    for a in articles:
+        ticker = detect_ticker(a.title, a.summary or "", settings.primary_symbol)
+        groups.setdefault(ticker, []).append(a)
+    return groups
+
+
+def _blend(db: Session, symbol: str, articles: list[NewsArticle]) -> PredictionResult:
+    """Pure-ish computation over an already-filtered article list (grouping
+    by ticker/relevance is the caller's job - see generate_all_predictions)
+    plus one historical-analogue query scoped to this symbol's own trending
+    categories."""
     now = datetime.now(timezone.utc)
     contributions: list[ArticleContribution] = []
     weighted_sum = 0.0
@@ -136,10 +169,15 @@ def generate_prediction(db: Session, symbol: str, horizon_hours: int = 48) -> Pr
 
     news_sentiment = (weighted_sum / weight_total) if weight_total > 0 else 0.0
 
-    # Historical analogues: for every category trending in the current news
-    # (at least 2 matching articles, to avoid a single stray headline
+    # Historical analogues: for every category trending in this ticker's own
+    # news (at least 2 matching articles, to avoid a single stray headline
     # dragging in an unrelated historical event), pull matching
-    # HistoricalEvent rows and average their 1-day reaction as a prior.
+    # HistoricalEvent rows. A row about this EXACT ticker (event.symbol ==
+    # symbol) is a much stronger analogue than a same-category-different-
+    # company one (e.g. a new Tesla headline recalling the real Tesla
+    # Roadster reveal, not just "some product_launch happened once") -
+    # counted twice in the average to reflect that, not silently discarded
+    # or treated identically to an unrelated company's history.
     trending_categories = [cat for cat, count in category_hits.items() if count >= 2]
     analogue_rows: list[HistoricalEvent] = []
     if trending_categories:
@@ -148,8 +186,16 @@ def generate_prediction(db: Session, symbol: str, horizon_hours: int = 48) -> Pr
             .filter(HistoricalEvent.category.in_(trending_categories))
             .all()
         )
-    analogue_moves = [e.market_move_1d_pct for e in analogue_rows if e.market_move_1d_pct is not None]
-    analogue_prior = (sum(analogue_moves) / len(analogue_moves) / 10) if analogue_moves else 0.0
+
+    weighted_moves: list[float] = []
+    for e in analogue_rows:
+        if e.market_move_1d_pct is None:
+            continue
+        weighted_moves.append(e.market_move_1d_pct)
+        if e.symbol == symbol:
+            weighted_moves.append(e.market_move_1d_pct)  # same-ticker analogue counts twice
+
+    analogue_prior = (sum(weighted_moves) / len(weighted_moves) / 10) if weighted_moves else 0.0
     # /10 rescales a typical event-day % move (often single digits, COVID
     # being a deliberate outlier) into roughly the same -1..+1 range as the
     # sentiment score, so neither component dominates the blend by units
@@ -160,6 +206,7 @@ def generate_prediction(db: Session, symbol: str, horizon_hours: int = 48) -> Pr
         AnalogueMatch(
             title=e.title, category=e.category, event_date=e.event_date.date().isoformat(),
             market_move_1d_pct=e.market_move_1d_pct, market_move_5d_pct=e.market_move_5d_pct,
+            same_ticker=(e.symbol == symbol),
         )
         for e in analogue_rows
     ]
@@ -195,6 +242,38 @@ def generate_prediction(db: Session, symbol: str, horizon_hours: int = 48) -> Pr
     )
 
 
+def generate_prediction_for_symbol(db: Session, symbol: str) -> PredictionResult:
+    """Single-symbol entry point: filters the recent article window down to
+    just the ones whose detected ticker is `symbol`, then blends. Used for
+    an on-demand `?fresh=true&symbol=...` outlook request for one ticker."""
+    articles = _fetch_recent_articles(db)
+    groups = group_articles_by_ticker(articles)
+    return _blend(db, symbol, groups.get(symbol, []))
+
+
+def generate_all_predictions(db: Session) -> dict[str, PredictionResult]:
+    """Generates one prediction per real ticker currently in the news (at
+    least MIN_ARTICLES_PER_TICKER articles), plus always the configured
+    primary symbol (general/macro news with no specific company named) even
+    on a quiet day - that's the main index-level call other systems may
+    depend on, so it should never simply be missing."""
+    articles = _fetch_recent_articles(db)
+    groups = group_articles_by_ticker(articles)
+
+    results: dict[str, PredictionResult] = {}
+    primary = settings.primary_symbol
+    results[primary] = _blend(db, primary, groups.get(primary, []))
+
+    for ticker, ticker_articles in groups.items():
+        if ticker == primary:
+            continue
+        if len(ticker_articles) < MIN_ARTICLES_PER_TICKER:
+            continue
+        results[ticker] = _blend(db, ticker, ticker_articles)
+
+    return results
+
+
 def persist_prediction(db: Session, symbol: str, horizon_hours: int, result: PredictionResult) -> Prediction:
     reasoning = {
         "news_component": result.news_component,
@@ -214,6 +293,7 @@ def persist_prediction(db: Session, symbol: str, horizon_hours: int, result: Pre
             {
                 "title": a.title, "category": a.category, "event_date": a.event_date,
                 "market_move_1d_pct": a.market_move_1d_pct, "market_move_5d_pct": a.market_move_5d_pct,
+                "same_ticker": a.same_ticker,
             }
             for a in result.analogues
         ],

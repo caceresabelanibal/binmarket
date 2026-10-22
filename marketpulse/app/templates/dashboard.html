@@ -55,10 +55,22 @@
   </div>
 
   <div class="card">
+    <h2>Predicciones por ticker</h2>
+    <p class="reasoning-note" style="margin-top:0;">
+      Un ticker aparece acá en cuanto tiene al menos 2 noticias reales propias en las últimas 48hs - cada uno tiene su
+      propia predicción (sentimiento + analogías históricas + tendencia real de precio), no sólo el índice general.
+    </p>
+    <table>
+      <thead><tr><th>Ticker</th><th>Dirección</th><th>Confianza</th><th>Sentimiento</th><th>Artículos</th><th>Calculado</th></tr></thead>
+      <tbody id="outlooks-rows"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
     <h2>Backtest - ¿acertó la dirección?</h2>
     <div class="outlook-grid" id="backtest-summary"></div>
     <table style="margin-top:14px;">
-      <thead><tr><th>Fecha</th><th>Predijo</th><th>Confianza</th><th>Movimiento real</th><th>Resultado</th></tr></thead>
+      <thead><tr><th>Ticker</th><th>Fecha</th><th>Predijo</th><th>Confianza</th><th>Movimiento real</th><th>Resultado</th></tr></thead>
       <tbody id="backtest-rows"></tbody>
     </table>
   </div>
@@ -119,6 +131,28 @@ async function loadOutlook(fresh) {
   document.getElementById("trend").className = "stat-value " + toneClass(d.recent_trend_pct);
   document.getElementById("article-count").textContent = d.article_count;
   document.getElementById("as-of").textContent = new Date(d.as_of).toLocaleString("es-AR");
+}
+
+async function loadOutlooksAll() {
+  const res = await fetch("/api/v1/outlooks");
+  const items = await res.json();
+  const tbody = document.getElementById("outlooks-rows");
+  tbody.innerHTML = "";
+  for (const item of items) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><strong>${item.symbol}</strong><div class="muted" style="margin-top:2px;">${item.symbol_label}</div></td>
+      <td><span class="${badgeClass(item.direction)}">${item.direction}</span></td>
+      <td>${item.confidence_pct.toFixed(1)}%</td>
+      <td class="${toneClass(item.sentiment_score)}">${item.sentiment_score.toFixed(3)}</td>
+      <td>${item.article_count}</td>
+      <td class="muted">${new Date(item.as_of).toLocaleString("es-AR")}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+  if (items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">Todavía no hay predicciones por ticker.</td></tr>';
+  }
 }
 
 async function loadNews() {
@@ -190,6 +224,7 @@ async function loadBacktest() {
   for (const v of d.predictions) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
+      <td><strong>${v.symbol}</strong></td>
       <td>${new Date(v.created_at).toLocaleString("es-AR")}</td>
       <td><span class="${badgeClass(v.direction)}">${v.direction}</span></td>
       <td>${v.confidence_pct.toFixed(1)}%</td>
@@ -199,12 +234,12 @@ async function loadBacktest() {
     tbody.appendChild(tr);
   }
   if (d.predictions.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="muted">Todavía no hay predicciones registradas.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">Todavía no hay predicciones registradas.</td></tr>';
   }
 }
 
 async function loadAll(fresh) {
-  await Promise.allSettled([loadOutlook(fresh), loadNews(), loadAnalogues(), loadBacktest()]);
+  await Promise.allSettled([loadOutlook(fresh), loadOutlooksAll(), loadNews(), loadAnalogues(), loadBacktest()]);
 }
 
 document.getElementById("refresh-btn").addEventListener("click", async () => {

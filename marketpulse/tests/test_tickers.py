@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.tickers import detect_ticker
+from app.tickers import detect_ticker, label_for_ticker
 
 
 def test_detects_a_named_company_in_the_title():
@@ -46,3 +46,12 @@ def test_falls_back_to_summary_only_when_the_title_names_no_company():
     title = "Stock rallies after strong quarter"
     summary = "Shares of Apple rose on the news."
     assert detect_ticker(title, summary, "^IXIC") == "AAPL"
+
+
+def test_label_for_ticker_returns_a_readable_company_name():
+    assert label_for_ticker("TSLA") == "Tesla"
+    assert label_for_ticker("NVDA") == "Nvidia"
+
+
+def test_label_for_ticker_falls_back_to_the_bare_symbol_when_uncurated():
+    assert label_for_ticker("^IXIC") == "^IXIC"

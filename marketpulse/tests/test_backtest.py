@@ -5,7 +5,7 @@ from app.backtest import PredictionVerdict, summarize_verdicts
 
 def _verdict(verdict: str) -> PredictionVerdict:
     return PredictionVerdict(
-        prediction_id="x", created_at="2026-01-01T00:00:00+00:00", direction="LONG",
+        prediction_id="x", symbol="^IXIC", created_at="2026-01-01T00:00:00+00:00", direction="LONG",
         confidence_pct=50.0, price_at_prediction=100.0, price_at_horizon=101.0,
         actual_move_pct=1.0, verdict=verdict,
     )
