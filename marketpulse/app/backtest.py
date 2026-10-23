@@ -27,13 +27,26 @@ class PredictionVerdict:
     verdict: str  # "CORRECT" | "WRONG" | "PENDING" | "NO_TRADE" | "NO_DATA"
 
 
-def _closest_price(prices: list[MarketPriceDaily], target: datetime) -> MarketPriceDaily | None:
-    """Nearest cached daily close to `target` within 2 days either way -
-    daily data can't line up to the exact hour a prediction was made."""
-    candidates = [p for p in prices if abs((p.price_date - target).total_seconds()) <= 2 * 86400]
+def _price_as_of(prices: list[MarketPriceDaily], target: datetime, max_lookback_days: int = 7) -> MarketPriceDaily | None:
+    """The most recent cached close that had ALREADY happened by `target` -
+    never one that postdates it. Real bug this replaced: the previous
+    version picked whichever cached close was NEAREST to `target` in
+    absolute time, which for a prediction made in the afternoon/evening
+    often meant the NEXT day's close (closer in clock-hours than
+    yesterday's) got used as the "entry" price - a close that didn't exist
+    yet when the prediction was actually made. That same next-day close
+    then also became the nearest match for the HORIZON side a day later,
+    so entry and horizon frequently collided on the identical row, forcing
+    an artificial 0.00% "move" (see the PENDING guard below). As-of
+    (backward-only) lookup can't do that: the horizon's cutoff is always
+    later than the entry's, so it can only match an equal-or-later close.
+    `max_lookback_days` guards against silently using a wildly stale close
+    if a ticker's price cache has a real gap (weekends/holidays need at
+    most a few days, never this many)."""
+    candidates = [p for p in prices if p.price_date <= target and (target - p.price_date).days <= max_lookback_days]
     if not candidates:
         return None
-    return min(candidates, key=lambda p: abs((p.price_date - target).total_seconds()))
+    return max(candidates, key=lambda p: p.price_date)
 
 
 def evaluate_predictions(
@@ -96,7 +109,7 @@ def evaluate_predictions(
         created_at = p.created_at if p.created_at.tzinfo else p.created_at.replace(tzinfo=timezone.utc)
         horizon_time = created_at + timedelta(hours=p.horizon_hours)
 
-        entry_price_row = _closest_price(prices, created_at)
+        entry_price_row = _price_as_of(prices, created_at)
         entry_price = entry_price_row.close if entry_price_row else None
 
         if p.direction == "NO_TRADE":
@@ -113,7 +126,7 @@ def evaluate_predictions(
             ))
             continue
 
-        horizon_price_row = _closest_price(prices, horizon_time)
+        horizon_price_row = _price_as_of(prices, horizon_time)
         if not entry_price_row or not horizon_price_row:
             verdicts.append(PredictionVerdict(
                 p.id, p.symbol, created_at.isoformat(), p.direction, p.confidence_pct,
@@ -121,18 +134,11 @@ def evaluate_predictions(
             ))
             continue
 
-        # Real bug this guards against, made much more visible once the
-        # horizon was shortened to 24h (see predictor.PREDICTION_HORIZON_HOURS):
-        # daily closes are cached once per real trading day, so a prediction
-        # made before today's close, with a 24h horizon landing before
-        # TOMORROW's close has posted, finds no row newer than entry's own -
-        # _closest_price then returns the SAME cached row for both entry and
-        # horizon. That produced an exact 0.00% "move" and got scored WRONG
-        # (or CORRECT, depending on direction) purely from a sign comparison
-        # against a fabricated zero, not a real market move. If the horizon
-        # price isn't from a trading day strictly after the entry price's,
-        # the real next close simply hasn't posted yet - PENDING, not a
-        # score, same as "wait for data, but the data came back empty."
+        # With as-of (backward-only) lookups this can only happen when no
+        # new close has posted ANYWHERE between created_at and horizon_time
+        # yet - a real "the data just isn't there yet" wait, not an
+        # artifact of the matching method. Scored as PENDING, never as a
+        # fabricated 0.00% move.
         if horizon_price_row.price_date <= entry_price_row.price_date:
             verdicts.append(PredictionVerdict(
                 p.id, p.symbol, created_at.isoformat(), p.direction, p.confidence_pct,
