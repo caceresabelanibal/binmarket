@@ -20,6 +20,7 @@ from .events_backfill import backfill_pending_event_moves
 from .ingest import ingest_all_feeds, prune_old_data, refresh_price_cache
 from .models import HistoricalEvent, NewsArticle, Prediction, User
 from .predictor import (
+    PREDICTION_HORIZON_HOURS,
     generate_all_predictions,
     generate_prediction_for_symbol,
     persist_prediction,
@@ -68,7 +69,7 @@ def outlook(symbol: str | None = None, fresh: bool = False, db: Session = Depend
 
     if fresh:
         result = generate_prediction_for_symbol(db, target_symbol)
-        row = persist_prediction(db, target_symbol, 48, result)
+        row = persist_prediction(db, target_symbol, PREDICTION_HORIZON_HOURS, result)
     else:
         row = (
             db.query(Prediction)
@@ -78,7 +79,7 @@ def outlook(symbol: str | None = None, fresh: bool = False, db: Session = Depend
         )
         if row is None:
             result = generate_prediction_for_symbol(db, target_symbol)
-            row = persist_prediction(db, target_symbol, 48, result)
+            row = persist_prediction(db, target_symbol, PREDICTION_HORIZON_HOURS, result)
 
     return _to_outlook_response(row)
 
@@ -325,7 +326,9 @@ def trigger_ingest_now(db: Session = Depends(get_db), _: User = Depends(get_curr
     for sym in results:
         refresh_price_cache(db, sym)
 
-    predictions = {sym: persist_prediction(db, sym, 48, result) for sym, result in results.items()}
+    predictions = {
+        sym: persist_prediction(db, sym, PREDICTION_HORIZON_HOURS, result) for sym, result in results.items()
+    }
     primary_row = predictions.get(settings.primary_symbol)
 
     return {

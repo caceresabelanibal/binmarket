@@ -103,7 +103,7 @@ class Prediction(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     symbol: Mapped[str] = mapped_column(String(16), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
-    horizon_hours: Mapped[int] = mapped_column(Integer, default=48)
+    horizon_hours: Mapped[int] = mapped_column(Integer, default=24)
     direction: Mapped[str] = mapped_column(String(16))  # LONG | SHORT | NO_TRADE
     confidence_pct: Mapped[float] = mapped_column(Float)
     sentiment_score: Mapped[float] = mapped_column(Float)

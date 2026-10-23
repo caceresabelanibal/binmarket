@@ -39,6 +39,14 @@ from .models import HistoricalEvent, NewsArticle, Prediction
 from .prices import fetch_daily_closes
 from .tickers import detect_ticker
 
+# How far ahead a prediction's direction call is meant to apply - requested
+# directly by the user: 48h meant that "something happened today" couldn't
+# be scored CORRECT/WRONG (or acted on) until the day after tomorrow, which
+# is too slow for "I need to know how to trade tomorrow." The single source
+# of truth: every persist_prediction() call and app/backtest.py's horizon
+# math both key off of the actually-stored Prediction.horizon_hours, which
+# is always set from this constant, never a separate hardcoded number.
+PREDICTION_HORIZON_HOURS = 24
 NEWS_LOOKBACK_HOURS = 48
 ARTICLE_QUERY_SAFETY_CAP = 5000
 # A ticker needs at least this many real articles in the window before it

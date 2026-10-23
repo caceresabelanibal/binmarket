@@ -44,13 +44,19 @@ def evaluate_predictions(
     date_to: datetime | None = None,
 ) -> list[PredictionVerdict]:
     """Real production bug this replaced: predictions are generated every
-    `ingest_interval_minutes` (30 by default) and need `horizon_hours` (48)
-    to actually elapse before they can be scored - but the old
-    `limit(60)` (a row count, not a time window) only ever reached back
-    ~30 hours (60 * 30min), always LESS than the 48h horizon. The backtest
-    could never show a single CORRECT/WRONG verdict, no matter how long the
-    service ran - every prediction was perpetually "too recent" by
-    construction. A real time window fixes this structurally.
+    `ingest_interval_minutes` (30 by default) and need `horizon_hours` (48 at
+    the time this bug existed, now predictor.PREDICTION_HORIZON_HOURS - see
+    that module for why it was shortened to 24) to actually elapse before
+    they can be scored - but the old `limit(60)` (a row count, not a time
+    window) only ever reached back ~30 hours (60 * 30min), always LESS than
+    the horizon. The backtest could never show a single CORRECT/WRONG
+    verdict, no matter how long the service ran - every prediction was
+    perpetually "too recent" by construction. A real time window fixes this
+    structurally. Each row's OWN `horizon_hours` always decides its verdict
+    timing here, never a module-level constant re-read at evaluation time -
+    so predictions made under an older horizon setting keep evaluating
+    against the value they were actually created with, unless explicitly
+    migrated (see app/seed.py's migrate_prediction_horizon).
 
     `symbol=None` evaluates every ticker that has predictions (requested
     directly by the user - MarketPulse now tracks whatever real tickers the
