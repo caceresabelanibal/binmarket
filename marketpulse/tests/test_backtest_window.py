@@ -93,6 +93,33 @@ def test_predictions_outside_the_window_are_excluded(db):
     assert verdicts == []
 
 
+def test_a_horizon_with_no_newer_cached_close_yet_is_pending_not_scored(db):
+    """Real bug made far more common once the horizon was shortened to 24h
+    (predictor.PREDICTION_HORIZON_HOURS): daily closes are cached once per
+    real trading day, so a prediction whose horizon has elapsed by wall
+    clock but whose real NEXT close hasn't posted yet found the same cached
+    row for both entry and horizon - an exact 0.00% "move" that got scored
+    WRONG (or CORRECT) off a comparison against a fabricated zero, not a
+    real market move. Confirmed live: horizon shortened, ~29 predictions
+    immediately scored WRONG this way. Must be PENDING instead."""
+    symbol = "^IXIC"
+    now = datetime.now(timezone.utc)
+    created_at = now - timedelta(hours=25)  # 24h horizon already elapsed
+
+    db.add(_prediction(symbol, created_at, "LONG", horizon_hours=24))
+    # Only one cached close exists, and it's the closest match to BOTH the
+    # entry time and the (already-elapsed) horizon time - the real close
+    # covering the horizon simply hasn't been fetched into the cache yet.
+    db.add(_price(symbol, now - timedelta(hours=20), 100.0))
+    db.commit()
+
+    verdicts = evaluate_predictions(db, symbol, days_back=14)
+
+    assert len(verdicts) == 1
+    assert verdicts[0].verdict == "PENDING"
+    assert verdicts[0].actual_move_pct is None
+
+
 def test_symbol_filter_is_a_case_insensitive_substring_match(db):
     """Dashboard filter requirement: typing part of a ticker should find
     it, not require the exact full symbol."""
