@@ -155,10 +155,33 @@ class NewsItemResponse(BaseModel):
         from_attributes = True
 
 
-@router.get("/news", response_model=list[NewsItemResponse])
-def recent_news(limit: int = 40, db: Session = Depends(get_db)) -> list[NewsItemResponse]:
-    rows = db.query(NewsArticle).order_by(NewsArticle.fetched_at.desc()).limit(min(limit, 150)).all()
-    return [
+# How many of the most recent articles are even considered for this panel's
+# filter/pagination - a display cap, not the real retention window (see
+# ingest.NEWS_ARTICLE_RETENTION_DAYS). `ticker`/`article_prediction` are
+# derived per-article, not stored columns, so filtering happens in Python
+# after this bounded fetch - same approach as /outlooks.
+NEWS_DISPLAY_CAP = 500
+
+
+class PaginatedNewsResponse(BaseModel):
+    items: list[NewsItemResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+@router.get("/news", response_model=PaginatedNewsResponse)
+def recent_news(
+    ticker: str | None = None, direction: str | None = None,
+    page: int = 1, page_size: int = 3,
+    db: Session = Depends(get_db),
+) -> PaginatedNewsResponse:
+    """Paginated (3 per page by default) with optional `ticker` and
+    `direction` filters, requested directly by the user so this list - which
+    can run into the hundreds within a day - doesn't turn into one giant
+    unfiltered page either."""
+    rows = db.query(NewsArticle).order_by(NewsArticle.fetched_at.desc()).limit(NEWS_DISPLAY_CAP).all()
+    items = [
         NewsItemResponse(
             title=r.title, url=r.url, source=r.source, sentiment_score=r.sentiment_score,
             matched_categories=r.matched_categories or [],
@@ -168,6 +191,21 @@ def recent_news(limit: int = 40, db: Session = Depends(get_db)) -> list[NewsItem
         )
         for r in rows
     ]
+
+    if ticker:
+        needle = ticker.strip().upper()
+        items = [i for i in items if needle in i.ticker.upper()]
+    if direction:
+        wanted = direction.strip().upper()
+        items = [i for i in items if i.article_prediction == wanted]
+
+    page = max(page, 1)
+    page_size = max(1, min(page_size, 100))
+    total = len(items)
+    start = (page - 1) * page_size
+    return PaginatedNewsResponse(
+        items=items[start:start + page_size], total=total, page=page, page_size=page_size,
+    )
 
 
 class HistoricalEventResponse(BaseModel):
