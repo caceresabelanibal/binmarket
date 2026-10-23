@@ -20,51 +20,68 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
 }
 
 header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
+  padding: 10px 20px;
   border-bottom: 1px solid var(--border);
 }
 
-header h1 { font-size: 18px; margin: 0; color: var(--accent); }
-header .sub { font-size: 12px; color: var(--text-muted); }
+header h1 { font-size: 16px; margin: 0; color: var(--accent); }
+header .sub { font-size: 11px; color: var(--text-muted); }
 
 main {
-  max-width: 1100px;
+  max-width: 1760px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 16px 20px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 14px;
+}
+
+/* Two cards side by side on wide screens - this is a dashboard meant to be
+   scanned without scrolling, not a long single-column document. Falls back
+   to one column once there isn't room for two to breathe (tablet/phone). */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1050px) {
+  .grid-2 { grid-template-columns: 1fr; }
 }
 
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 18px 20px;
+  padding: 14px 16px;
+  min-width: 0; /* let tables shrink/scroll instead of blowing out the grid column */
 }
 
 .card h2 {
-  font-size: 13px;
+  font-size: 11.5px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-secondary);
-  margin: 0 0 12px 0;
+  margin: 0 0 8px 0;
 }
 
 .outlook-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
 }
 
-.stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; }
-.stat-value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+.stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; }
+.stat-value { font-size: 18px; font-weight: 600; margin-top: 3px; }
+
+.table-scroll { overflow-x: auto; }
 
 .badge {
   display: inline-block;
@@ -81,9 +98,9 @@ main {
 .badge-pending { background: rgba(148,163,184,0.15); color: var(--neutral); }
 .badge-no_data { background: rgba(148,163,184,0.1); color: var(--text-muted); }
 
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; }
-td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 520px; }
+th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 5px 6px; border-bottom: 1px solid var(--border); font-size: 10px; text-transform: uppercase; }
+td { padding: 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
 tr:last-child td { border-bottom: none; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -97,47 +114,48 @@ button {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 7px 14px;
-  font-size: 13px;
+  padding: 6px 12px;
+  font-size: 12px;
   cursor: pointer;
 }
 button:hover { background: var(--border); }
 button:disabled { opacity: 0.5; cursor: default; }
 
 .reasoning-note {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
-  margin-top: 10px;
-  line-height: 1.5;
+  margin-top: 8px;
+  margin-bottom: 10px;
+  line-height: 1.45;
 }
 
 .filter-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 .filter-row input, .filter-row select {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px 9px;
+  padding: 5px 8px;
   color: var(--text);
-  font-size: 12px;
+  font-size: 11px;
 }
-.filter-row input[type="text"] { width: 110px; }
-.filter-row label { font-size: 11px; color: var(--text-muted); }
+.filter-row input[type="text"] { width: 90px; }
+.filter-row label { font-size: 10.5px; color: var(--text-muted); }
 
 .pagination {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 10px;
-  font-size: 12px;
+  margin-top: 8px;
+  font-size: 11px;
   color: var(--text-muted);
 }
-.pagination button { padding: 5px 12px; font-size: 12px; }
+.pagination button { padding: 4px 10px; font-size: 11px; }
 
 /* login page */
 .login-wrap {

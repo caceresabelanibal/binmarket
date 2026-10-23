@@ -44,7 +44,7 @@
       </div>
       <div>
         <div class="stat-label">Calculado</div>
-        <div class="stat-value" id="as-of" style="font-size:14px; font-weight:400;">-</div>
+        <div class="stat-value" id="as-of" style="font-size:12px; font-weight:400;">-</div>
       </div>
     </div>
     <p class="reasoning-note">
@@ -54,106 +54,137 @@
     </p>
   </div>
 
-  <div class="card">
-    <h2>Predicciones por ticker</h2>
-    <p class="reasoning-note" style="margin-top:0;">
-      Un ticker aparece acá en cuanto tiene al menos 2 noticias reales propias en las últimas 48hs - cada uno tiene su
-      propia predicción (sentimiento + analogías históricas + tendencia real de precio), no sólo el índice general.
-    </p>
-    <div class="filter-row">
-      <label>Ticker <input type="text" id="outlooks-filter-ticker" placeholder="ej: TSLA"></label>
-      <label>Dirección
-        <select id="outlooks-filter-direction">
-          <option value="">Todas</option>
-          <option value="LONG">LONG</option>
-          <option value="SHORT">SHORT</option>
-          <option value="NO_TRADE">NO_TRADE</option>
-        </select>
-      </label>
-      <button id="outlooks-filter-apply">Filtrar</button>
-      <button id="outlooks-filter-clear">Limpiar</button>
+  <div class="grid-2">
+    <div class="card">
+      <h2>Predicciones por ticker</h2>
+      <p class="reasoning-note" style="margin-top:0;">
+        Un ticker aparece acá en cuanto tiene al menos 2 noticias reales propias en las últimas 48hs - cada uno tiene su
+        propia predicción (sentimiento + analogías históricas + tendencia real de precio), no sólo el índice general.
+      </p>
+      <div class="filter-row">
+        <label>Ticker <input type="text" id="outlooks-filter-ticker" placeholder="ej: TSLA"></label>
+        <label>Dirección
+          <select id="outlooks-filter-direction">
+            <option value="">Todas</option>
+            <option value="LONG">LONG</option>
+            <option value="SHORT">SHORT</option>
+            <option value="NO_TRADE">NO_TRADE</option>
+          </select>
+        </label>
+        <button id="outlooks-filter-apply">Filtrar</button>
+        <button id="outlooks-filter-clear">Limpiar</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Ticker</th><th>Dirección</th><th>Confianza</th><th>Sentimiento</th><th>Artículos</th><th>Calculado</th></tr></thead>
+          <tbody id="outlooks-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <span id="outlooks-page-info"></span>
+        <div style="display:flex; gap:8px;">
+          <button id="outlooks-prev">Anterior</button>
+          <button id="outlooks-next">Siguiente</button>
+        </div>
+      </div>
     </div>
-    <table>
-      <thead><tr><th>Ticker</th><th>Dirección</th><th>Confianza</th><th>Sentimiento</th><th>Artículos</th><th>Calculado</th></tr></thead>
-      <tbody id="outlooks-rows"></tbody>
-    </table>
-    <div class="pagination">
-      <span id="outlooks-page-info"></span>
-      <div style="display:flex; gap:8px;">
-        <button id="outlooks-prev">Anterior</button>
-        <button id="outlooks-next">Siguiente</button>
+
+    <div class="card">
+      <h2>Backtest - ¿acertó la dirección?</h2>
+      <div class="outlook-grid" id="backtest-summary"></div>
+      <div class="filter-row" style="margin-top:14px;">
+        <label>Ticker <input type="text" id="backtest-filter-ticker" placeholder="ej: TSLA"></label>
+        <label>Resultado
+          <select id="backtest-filter-verdict">
+            <option value="">Todos</option>
+            <option value="CORRECT">CORRECT</option>
+            <option value="WRONG">WRONG</option>
+            <option value="PENDING">PENDING</option>
+            <option value="NO_TRADE">NO_TRADE</option>
+            <option value="NO_DATA">NO_DATA</option>
+          </select>
+        </label>
+        <label>Desde <input type="date" id="backtest-filter-from"></label>
+        <label>Hasta <input type="date" id="backtest-filter-to"></label>
+        <button id="backtest-filter-apply">Filtrar</button>
+        <button id="backtest-filter-clear">Limpiar</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Ticker</th><th>Fecha</th><th>Predijo</th><th>Confianza</th><th>Movimiento real</th><th>Resultado</th></tr></thead>
+          <tbody id="backtest-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <span id="backtest-page-info"></span>
+        <div style="display:flex; gap:8px;">
+          <button id="backtest-prev">Anterior</button>
+          <button id="backtest-next">Siguiente</button>
+        </div>
       </div>
     </div>
   </div>
 
-  <div class="card">
-    <h2>Backtest - ¿acertó la dirección?</h2>
-    <div class="outlook-grid" id="backtest-summary"></div>
-    <div class="filter-row" style="margin-top:14px;">
-      <label>Ticker <input type="text" id="backtest-filter-ticker" placeholder="ej: TSLA"></label>
-      <label>Resultado
-        <select id="backtest-filter-verdict">
-          <option value="">Todos</option>
-          <option value="CORRECT">CORRECT</option>
-          <option value="WRONG">WRONG</option>
-          <option value="PENDING">PENDING</option>
-          <option value="NO_TRADE">NO_TRADE</option>
-          <option value="NO_DATA">NO_DATA</option>
-        </select>
-      </label>
-      <label>Desde <input type="date" id="backtest-filter-from"></label>
-      <label>Hasta <input type="date" id="backtest-filter-to"></label>
-      <button id="backtest-filter-apply">Filtrar</button>
-      <button id="backtest-filter-clear">Limpiar</button>
-    </div>
-    <table>
-      <thead><tr><th>Ticker</th><th>Fecha</th><th>Predijo</th><th>Confianza</th><th>Movimiento real</th><th>Resultado</th></tr></thead>
-      <tbody id="backtest-rows"></tbody>
-    </table>
-    <div class="pagination">
-      <span id="backtest-page-info"></span>
-      <div style="display:flex; gap:8px;">
-        <button id="backtest-prev">Anterior</button>
-        <button id="backtest-next">Siguiente</button>
+  <div class="grid-2">
+    <div class="card">
+      <h2>Noticias recientes consideradas</h2>
+      <p class="reasoning-note" style="margin-top:0;">
+        "Ticker" es la empresa real detectada en el titular. "Predicción" es lo que el sentimiento propio de esa
+        noticia -sola- indicaría para ese ticker, con el mismo umbral que la predicción combinada.
+      </p>
+      <div class="filter-row">
+        <label>Ticker <input type="text" id="news-filter-ticker" placeholder="ej: TSLA"></label>
+        <label>Predicción
+          <select id="news-filter-direction">
+            <option value="">Todas</option>
+            <option value="LONG">LONG</option>
+            <option value="SHORT">SHORT</option>
+            <option value="NO_TRADE">NO_TRADE</option>
+          </select>
+        </label>
+        <button id="news-filter-apply">Filtrar</button>
+        <button id="news-filter-clear">Limpiar</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Fuente</th><th>Titular</th><th>Ticker</th><th>Predicción</th><th>Sentimiento</th><th>Categorías</th></tr></thead>
+          <tbody id="news-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <span id="news-page-info"></span>
+        <div style="display:flex; gap:8px;">
+          <button id="news-prev">Anterior</button>
+          <button id="news-next">Siguiente</button>
+        </div>
       </div>
     </div>
-  </div>
 
-  <div class="card">
-    <h2>Noticias recientes consideradas</h2>
-    <p class="reasoning-note" style="margin-top:0;">
-      "Ticker" es la empresa real detectada en el titular (o el índice general si no nombra una empresa específica).
-      "Predicción" es lo que el sentimiento propio de esa noticia -sola, sin mezclar con las demás- indicaría para ese
-      ticker, con el mismo umbral que usa la predicción combinada de arriba.
-    </p>
-    <table>
-      <thead><tr><th>Fuente</th><th>Titular</th><th>Ticker</th><th>Predicción</th><th>Sentimiento</th><th>Categorías</th></tr></thead>
-      <tbody id="news-rows"></tbody>
-    </table>
-  </div>
-
-  <div class="card">
-    <h2>Analogías históricas (eventos reales usados como referencia)</h2>
-    <p class="reasoning-note" style="margin-top:0;">
-      Cada fila es un evento real (no inventado) con su movimiento de mercado real, calculado a partir de
-      precios de cierre reales. Las predicciones de arriba usan estos eventos como referencia cuando una
-      noticia reciente coincide con la misma categoría (y cuentan doble si además es del mismo ticker).
-    </p>
-    <div class="filter-row">
-      <label>Desde <input type="date" id="analogues-filter-from"></label>
-      <label>Hasta <input type="date" id="analogues-filter-to"></label>
-      <button id="analogues-filter-apply">Filtrar</button>
-      <button id="analogues-filter-clear">Limpiar</button>
-    </div>
-    <table>
-      <thead><tr><th>Fecha</th><th>Evento</th><th>Categoría</th><th>Movimiento día</th><th>Movimiento 5 días</th></tr></thead>
-      <tbody id="analogues-rows"></tbody>
-    </table>
-    <div class="pagination">
-      <span id="analogues-page-info"></span>
-      <div style="display:flex; gap:8px;">
-        <button id="analogues-prev">Anterior</button>
-        <button id="analogues-next">Siguiente</button>
+    <div class="card">
+      <h2>Analogías históricas (eventos reales usados como referencia)</h2>
+      <p class="reasoning-note" style="margin-top:0;">
+        Eventos reales con su movimiento de mercado real, calculado a partir de precios de cierre reales. Las
+        predicciones usan estos eventos como referencia cuando una noticia coincide con la misma categoría (doble
+        peso si además es el mismo ticker).
+      </p>
+      <div class="filter-row">
+        <label>Desde <input type="date" id="analogues-filter-from"></label>
+        <label>Hasta <input type="date" id="analogues-filter-to"></label>
+        <button id="analogues-filter-apply">Filtrar</button>
+        <button id="analogues-filter-clear">Limpiar</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Fecha</th><th>Evento</th><th>Categoría</th><th>Mov. día</th><th>Mov. 5d</th></tr></thead>
+          <tbody id="analogues-rows"></tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <span id="analogues-page-info"></span>
+        <div style="display:flex; gap:8px;">
+          <button id="analogues-prev">Anterior</button>
+          <button id="analogues-next">Siguiente</button>
+        </div>
       </div>
     </div>
   </div>
@@ -232,12 +263,17 @@ async function loadOutlooksAll() {
   document.getElementById("outlooks-next").disabled = d.page * d.page_size >= d.total;
 }
 
+const newsState = { page: 1, page_size: 3, ticker: "", direction: "" };
+
 async function loadNews() {
-  const res = await fetch("/api/v1/news?limit=30");
-  const items = await res.json();
+  const params = new URLSearchParams({ page: newsState.page, page_size: newsState.page_size });
+  if (newsState.ticker) params.set("ticker", newsState.ticker);
+  if (newsState.direction) params.set("direction", newsState.direction);
+  const res = await fetch("/api/v1/news?" + params.toString());
+  const d = await res.json();
   const tbody = document.getElementById("news-rows");
   tbody.innerHTML = "";
-  for (const item of items) {
+  for (const item of d.items) {
     const tr = document.createElement("tr");
     const tdSource = document.createElement("td");
     tdSource.textContent = item.source;
@@ -262,9 +298,13 @@ async function loadNews() {
     tr.append(tdSource, tdTitle, tdTicker, tdPrediction, tdSentiment, tdCats);
     tbody.appendChild(tr);
   }
-  if (items.length === 0) {
+  if (d.items.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6" class="muted">Todavía no se ingirió ninguna noticia.</td></tr>';
   }
+  newsState.page = d.page;
+  renderPageInfo("news-page-info", d.page, d.page_size, d.total);
+  document.getElementById("news-prev").disabled = d.page <= 1;
+  document.getElementById("news-next").disabled = d.page * d.page_size >= d.total;
 }
 
 const analoguesState = { page: 1, page_size: 3, date_from: "", date_to: "" };
@@ -421,6 +461,25 @@ document.getElementById("analogues-prev").addEventListener("click", () => {
 });
 document.getElementById("analogues-next").addEventListener("click", () => {
   analoguesState.page += 1; loadAnalogues();
+});
+
+document.getElementById("news-filter-apply").addEventListener("click", () => {
+  newsState.ticker = document.getElementById("news-filter-ticker").value.trim();
+  newsState.direction = document.getElementById("news-filter-direction").value;
+  newsState.page = 1;
+  loadNews();
+});
+document.getElementById("news-filter-clear").addEventListener("click", () => {
+  document.getElementById("news-filter-ticker").value = "";
+  document.getElementById("news-filter-direction").value = "";
+  newsState.ticker = ""; newsState.direction = ""; newsState.page = 1;
+  loadNews();
+});
+document.getElementById("news-prev").addEventListener("click", () => {
+  if (newsState.page > 1) { newsState.page -= 1; loadNews(); }
+});
+document.getElementById("news-next").addEventListener("click", () => {
+  newsState.page += 1; loadNews();
 });
 
 requireAuth().then(() => loadAll(false));
