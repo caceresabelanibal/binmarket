@@ -108,3 +108,30 @@ class Prediction(Base):
     confidence_pct: Mapped[float] = mapped_column(Float)
     sentiment_score: Mapped[float] = mapped_column(Float)
     reasoning: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class WeightAdjustment(Base):
+    """One row per real adjustment the online-learning job (app/learning.py)
+    made to the prediction blend's component weights - an append-only audit
+    log, same discipline as everywhere else in this project: the weights
+    the model is CURRENTLY using are never a hidden, opaque number, they're
+    the most recent row here, and every change carries the exact real
+    hit-rate data that justified it, so a human can always see why the
+    model's behavior shifted, not just that it did."""
+
+    __tablename__ = "weight_adjustments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    news_weight: Mapped[float] = mapped_column(Float)
+    analogue_weight: Mapped[float] = mapped_column(Float)
+    trend_weight: Mapped[float] = mapped_column(Float)
+    # Each component's OWN standalone hit rate over the scored predictions
+    # this adjustment looked at - null if that component had no directional
+    # opinion (component score of exactly 0) in any of them, so nothing
+    # backs a change to its weight that cycle.
+    news_hit_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    analogue_hit_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trend_hit_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sample_size: Mapped[int] = mapped_column(Integer)  # how many real scored (CORRECT/WRONG) predictions backed this
+    note: Mapped[str] = mapped_column(Text)

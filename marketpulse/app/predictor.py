@@ -19,7 +19,12 @@ framing: the output is a sign and a confidence, not a target price. The
 whole computation is a transparent weighted sum, not a model with hidden
 weights - `reasoning` always carries every number and every contributing
 article/event that went into the final call, the same "never a black box"
-discipline as every strategy in the sibling BinMarket project.
+discipline as every strategy in the sibling BinMarket project. The three
+weights themselves are no longer fixed forever, either: app/learning.py
+nudges them over time based on each component's own real, scored track
+record (requested directly by the user: "me gustaría que vaya aprendiendo")
+- but that adjustment is its own auditable log, never a silent change to
+this module's math.
 
 This is a genuinely hard, speculative problem - predicting market direction
 from news sentiment has famously weak statistical edge in the academic
@@ -35,6 +40,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .learning import DEFAULT_WEIGHTS, get_current_weights
 from .models import HistoricalEvent, NewsArticle, Prediction
 from .prices import fetch_daily_closes
 from .tickers import detect_ticker
@@ -147,11 +153,17 @@ def group_articles_by_ticker(articles: list[NewsArticle]) -> dict[str, list[News
     return groups
 
 
-def _blend(db: Session, symbol: str, articles: list[NewsArticle]) -> PredictionResult:
+def _blend(
+    db: Session, symbol: str, articles: list[NewsArticle], weights: dict[str, float] | None = None,
+) -> PredictionResult:
     """Pure-ish computation over an already-filtered article list (grouping
     by ticker/relevance is the caller's job - see generate_all_predictions)
     plus one historical-analogue query scoped to this symbol's own trending
-    categories."""
+    categories. `weights` (news/analogue/trend) come from
+    app/learning.py's real, auditable adjustments - defaults to the
+    original hand-chosen split when the model hasn't learned anything yet
+    or no weights were explicitly passed (e.g. ad-hoc/test calls)."""
+    weights = weights or DEFAULT_WEIGHTS
     now = datetime.now(timezone.utc)
     contributions: list[ArticleContribution] = []
     weighted_sum = 0.0
@@ -222,10 +234,12 @@ def _blend(db: Session, symbol: str, articles: list[NewsArticle]) -> PredictionR
     trend_pct = _recent_trend_pct(symbol)
     trend_component = max(-1.0, min(1.0, (trend_pct or 0.0) / 5))  # a 5% 5-day move maxes this out
 
-    # Weights: news sentiment is the primary signal (it's the freshest,
-    # most specific-to-right-now input); historical analogues and recent
-    # trend are secondary confirmation/context, not drivers on their own.
-    combined = news_sentiment * 0.55 + analogue_prior * 0.25 + trend_component * 0.20
+    # Weights: originally news sentiment as the primary signal (freshest,
+    # most specific-to-right-now input) with historical analogues and
+    # recent trend as secondary confirmation/context - now adjusted over
+    # time by app/learning.py based on each component's own real, scored
+    # track record (see this module's own docstring).
+    combined = news_sentiment * weights["news"] + analogue_prior * weights["analogue"] + trend_component * weights["trend"]
     direction = score_to_direction(combined)
 
     # Confidence scales with |combined| AND how much real news volume backs
@@ -240,9 +254,9 @@ def _blend(db: Session, symbol: str, articles: list[NewsArticle]) -> PredictionR
         direction=direction,
         confidence_pct=confidence_pct,
         sentiment_score=round(news_sentiment, 4),
-        news_component=round(news_sentiment * 0.55, 4),
-        analogue_component=round(analogue_prior * 0.25, 4),
-        trend_component=round(trend_component * 0.20, 4),
+        news_component=round(news_sentiment * weights["news"], 4),
+        analogue_component=round(analogue_prior * weights["analogue"], 4),
+        trend_component=round(trend_component * weights["trend"], 4),
         contributing_articles=contributions[:15],
         analogues=analogues,
         recent_trend_pct=round(trend_pct, 2) if trend_pct is not None else None,
@@ -256,7 +270,8 @@ def generate_prediction_for_symbol(db: Session, symbol: str) -> PredictionResult
     an on-demand `?fresh=true&symbol=...` outlook request for one ticker."""
     articles = _fetch_recent_articles(db)
     groups = group_articles_by_ticker(articles)
-    return _blend(db, symbol, groups.get(symbol, []))
+    weights = get_current_weights(db)
+    return _blend(db, symbol, groups.get(symbol, []), weights)
 
 
 def generate_all_predictions(db: Session) -> dict[str, PredictionResult]:
@@ -267,17 +282,21 @@ def generate_all_predictions(db: Session) -> dict[str, PredictionResult]:
     depend on, so it should never simply be missing."""
     articles = _fetch_recent_articles(db)
     groups = group_articles_by_ticker(articles)
+    # Fetched once per cycle, not once per ticker - the weights don't
+    # change mid-cycle, and every ticker's prediction this cycle should be
+    # judged by the exact same (currently-learned) blend.
+    weights = get_current_weights(db)
 
     results: dict[str, PredictionResult] = {}
     primary = settings.primary_symbol
-    results[primary] = _blend(db, primary, groups.get(primary, []))
+    results[primary] = _blend(db, primary, groups.get(primary, []), weights)
 
     for ticker, ticker_articles in groups.items():
         if ticker == primary:
             continue
         if len(ticker_articles) < MIN_ARTICLES_PER_TICKER:
             continue
-        results[ticker] = _blend(db, ticker, ticker_articles)
+        results[ticker] = _blend(db, ticker, ticker_articles, weights)
 
     return results
 

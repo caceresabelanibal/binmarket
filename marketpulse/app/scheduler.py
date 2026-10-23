@@ -15,6 +15,7 @@ from .config import settings
 from .db import session_scope
 from .events_backfill import backfill_pending_event_moves
 from .ingest import ingest_all_feeds, prune_old_data, refresh_price_cache
+from .learning import update_weights_if_due
 from .predictor import PREDICTION_HORIZON_HOURS, generate_all_predictions, persist_prediction
 
 logger = logging.getLogger("marketpulse.scheduler")
@@ -34,6 +35,11 @@ def run_cycle_once() -> None:
         backfilled = backfill_pending_event_moves(db)
         if backfilled:
             logger.info("Backfilled %d historical event 5-day move(s) with real data", backfilled)
+
+    with session_scope() as db:
+        adjustment = update_weights_if_due(db)
+        if adjustment:
+            logger.info("Adjusted model weights (sample size %d): %s", adjustment.sample_size, adjustment.note)
 
     with session_scope() as db:
         results = generate_all_predictions(db)
