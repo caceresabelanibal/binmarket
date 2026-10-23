@@ -134,10 +134,28 @@
 
   <div class="card">
     <h2>Analogías históricas (eventos reales usados como referencia)</h2>
+    <p class="reasoning-note" style="margin-top:0;">
+      Cada fila es un evento real (no inventado) con su movimiento de mercado real, calculado a partir de
+      precios de cierre reales. Las predicciones de arriba usan estos eventos como referencia cuando una
+      noticia reciente coincide con la misma categoría (y cuentan doble si además es del mismo ticker).
+    </p>
+    <div class="filter-row">
+      <label>Desde <input type="date" id="analogues-filter-from"></label>
+      <label>Hasta <input type="date" id="analogues-filter-to"></label>
+      <button id="analogues-filter-apply">Filtrar</button>
+      <button id="analogues-filter-clear">Limpiar</button>
+    </div>
     <table>
       <thead><tr><th>Fecha</th><th>Evento</th><th>Categoría</th><th>Movimiento día</th><th>Movimiento 5 días</th></tr></thead>
       <tbody id="analogues-rows"></tbody>
     </table>
+    <div class="pagination">
+      <span id="analogues-page-info"></span>
+      <div style="display:flex; gap:8px;">
+        <button id="analogues-prev">Anterior</button>
+        <button id="analogues-next">Siguiente</button>
+      </div>
+    </div>
   </div>
 
 </main>
@@ -249,12 +267,17 @@ async function loadNews() {
   }
 }
 
+const analoguesState = { page: 1, page_size: 3, date_from: "", date_to: "" };
+
 async function loadAnalogues() {
-  const res = await fetch("/api/v1/analogues");
-  const items = await res.json();
+  const params = new URLSearchParams({ page: analoguesState.page, page_size: analoguesState.page_size });
+  if (analoguesState.date_from) params.set("date_from", analoguesState.date_from);
+  if (analoguesState.date_to) params.set("date_to", analoguesState.date_to);
+  const res = await fetch("/api/v1/analogues?" + params.toString());
+  const d = await res.json();
   const tbody = document.getElementById("analogues-rows");
   tbody.innerHTML = "";
-  for (const item of items) {
+  for (const item of d.items) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${item.event_date}</td>
@@ -265,6 +288,13 @@ async function loadAnalogues() {
     `;
     tbody.appendChild(tr);
   }
+  if (d.items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">No hay eventos históricos en este rango.</td></tr>';
+  }
+  analoguesState.page = d.page;
+  renderPageInfo("analogues-page-info", d.page, d.page_size, d.total);
+  document.getElementById("analogues-prev").disabled = d.page <= 1;
+  document.getElementById("analogues-next").disabled = d.page * d.page_size >= d.total;
 }
 
 const backtestState = { page: 1, page_size: 5, ticker: "", verdict: "", date_from: "", date_to: "" };
@@ -372,6 +402,25 @@ document.getElementById("backtest-prev").addEventListener("click", () => {
 });
 document.getElementById("backtest-next").addEventListener("click", () => {
   backtestState.page += 1; loadBacktest();
+});
+
+document.getElementById("analogues-filter-apply").addEventListener("click", () => {
+  analoguesState.date_from = document.getElementById("analogues-filter-from").value;
+  analoguesState.date_to = document.getElementById("analogues-filter-to").value;
+  analoguesState.page = 1;
+  loadAnalogues();
+});
+document.getElementById("analogues-filter-clear").addEventListener("click", () => {
+  document.getElementById("analogues-filter-from").value = "";
+  document.getElementById("analogues-filter-to").value = "";
+  analoguesState.date_from = ""; analoguesState.date_to = ""; analoguesState.page = 1;
+  loadAnalogues();
+});
+document.getElementById("analogues-prev").addEventListener("click", () => {
+  if (analoguesState.page > 1) { analoguesState.page -= 1; loadAnalogues(); }
+});
+document.getElementById("analogues-next").addEventListener("click", () => {
+  analoguesState.page += 1; loadAnalogues();
 });
 
 requireAuth().then(() => loadAll(false));
