@@ -107,10 +107,10 @@ def test_a_horizon_with_no_newer_cached_close_yet_is_pending_not_scored(db):
     created_at = now - timedelta(hours=25)  # 24h horizon already elapsed
 
     db.add(_prediction(symbol, created_at, "LONG", horizon_hours=24))
-    # Only one cached close exists, and it's the closest match to BOTH the
-    # entry time and the (already-elapsed) horizon time - the real close
-    # covering the horizon simply hasn't been fetched into the cache yet.
-    db.add(_price(symbol, now - timedelta(hours=20), 100.0))
+    # Only one cached close exists, at or before entry - it's the as-of
+    # match for BOTH the entry time and the (already-elapsed) horizon time,
+    # since no newer close has been cached yet.
+    db.add(_price(symbol, created_at - timedelta(hours=1), 100.0))
     db.commit()
 
     verdicts = evaluate_predictions(db, symbol, days_back=14)
