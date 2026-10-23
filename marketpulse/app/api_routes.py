@@ -180,10 +180,42 @@ class HistoricalEventResponse(BaseModel):
     source_note: str
 
 
-@router.get("/analogues", response_model=list[HistoricalEventResponse])
-def historical_analogues(db: Session = Depends(get_db)) -> list[HistoricalEventResponse]:
-    rows = db.query(HistoricalEvent).order_by(HistoricalEvent.event_date.desc()).all()
-    return [
+class PaginatedHistoricalEventsResponse(BaseModel):
+    items: list[HistoricalEventResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+@router.get("/analogues", response_model=PaginatedHistoricalEventsResponse)
+def historical_analogues(
+    date_from: str | None = None, date_to: str | None = None,
+    page: int = 1, page_size: int = 3,
+    db: Session = Depends(get_db),
+) -> PaginatedHistoricalEventsResponse:
+    """The curated reference-event table (requested directly by the user: it
+    had too few events to be a useful reference, so it was expanded, and
+    this list should paginate - 3 per page by default - with an optional
+    date range instead of dumping every row onto one long page."""
+    query = db.query(HistoricalEvent)
+    if date_from:
+        query = query.filter(HistoricalEvent.event_date >= datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc))
+    if date_to:
+        # Inclusive of the whole end date, not just midnight at its start.
+        query = query.filter(
+            HistoricalEvent.event_date < datetime.fromisoformat(date_to).replace(tzinfo=timezone.utc) + timedelta(days=1)
+        )
+
+    page = max(page, 1)
+    page_size = max(1, min(page_size, 100))
+    total = query.count()
+    rows = (
+        query.order_by(HistoricalEvent.event_date.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    items = [
         HistoricalEventResponse(
             title=r.title, category=r.category, event_date=r.event_date.date().isoformat(),
             description=r.description, market_move_1d_pct=r.market_move_1d_pct,
@@ -191,6 +223,7 @@ def historical_analogues(db: Session = Depends(get_db)) -> list[HistoricalEventR
         )
         for r in rows
     ]
+    return PaginatedHistoricalEventsResponse(items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get("/backtest")
