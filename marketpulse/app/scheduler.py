@@ -15,7 +15,7 @@ from .config import settings
 from .db import session_scope
 from .events_backfill import backfill_pending_event_moves
 from .ingest import ingest_all_feeds, prune_old_data, refresh_price_cache
-from .predictor import generate_all_predictions, persist_prediction
+from .predictor import PREDICTION_HORIZON_HOURS, generate_all_predictions, persist_prediction
 
 logger = logging.getLogger("marketpulse.scheduler")
 
@@ -47,7 +47,7 @@ def run_cycle_once() -> None:
 
     with session_scope() as db:
         for symbol, result in results.items():
-            prediction = persist_prediction(db, symbol, 48, result)
+            prediction = persist_prediction(db, symbol, PREDICTION_HORIZON_HOURS, result)
             logger.info(
                 "New prediction for %s: %s (confidence %.1f%%, %d articles)",
                 symbol, prediction.direction, prediction.confidence_pct, result.article_count,

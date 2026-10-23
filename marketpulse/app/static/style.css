@@ -33,6 +33,14 @@ header {
 
 header h1 { font-size: 16px; margin: 0; color: var(--accent); }
 header .sub { font-size: 11px; color: var(--text-muted); }
+header select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: var(--text);
+  font-size: 11px;
+}
 
 main {
   max-width: 1760px;

@@ -13,6 +13,15 @@
     <div class="sub">Lectura de noticias/feeds + analogías históricas -> dirección probable de mercado (no magnitud)</div>
   </div>
   <div style="display:flex; gap:10px; align-items:center;">
+    <label style="font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px;">
+      Auto-actualizar
+      <select id="auto-refresh-select">
+        <option value="15">15 seg</option>
+        <option value="30">30 seg</option>
+        <option value="60" selected>1 min</option>
+        <option value="300">5 min</option>
+      </select>
+    </label>
     <button id="refresh-btn">Actualizar ahora</button>
     <button id="logout-btn">Salir</button>
   </div>
@@ -23,7 +32,7 @@
     <h2>Outlook actual - <span id="symbol-label">...</span></h2>
     <div class="outlook-grid">
       <div>
-        <div class="stat-label">Dirección (próximas <span id="horizon">48</span>hs)</div>
+        <div class="stat-label">Dirección (próximas <span id="horizon">24</span>hs)</div>
         <div class="stat-value"><span id="direction-badge" class="badge">...</span></div>
       </div>
       <div>
@@ -482,8 +491,25 @@ document.getElementById("news-next").addEventListener("click", () => {
   newsState.page += 1; loadNews();
 });
 
+let autoRefreshTimer = null;
+function setupAutoRefresh() {
+  const select = document.getElementById("auto-refresh-select");
+  let saved = null;
+  try { saved = localStorage.getItem("mp_auto_refresh_seconds"); } catch (e) {}
+  if (saved && select.querySelector(`option[value="${saved}"]`)) select.value = saved;
+
+  const apply = () => {
+    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+    const seconds = parseInt(select.value, 10);
+    autoRefreshTimer = setInterval(() => loadAll(false), seconds * 1000);
+    try { localStorage.setItem("mp_auto_refresh_seconds", select.value); } catch (e) {}
+  };
+  select.addEventListener("change", apply);
+  apply();
+}
+
 requireAuth().then(() => loadAll(false));
-setInterval(() => loadAll(false), 60000);
+setupAutoRefresh();
 </script>
 </body>
 </html>
