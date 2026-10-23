@@ -121,6 +121,25 @@ def evaluate_predictions(
             ))
             continue
 
+        # Real bug this guards against, made much more visible once the
+        # horizon was shortened to 24h (see predictor.PREDICTION_HORIZON_HOURS):
+        # daily closes are cached once per real trading day, so a prediction
+        # made before today's close, with a 24h horizon landing before
+        # TOMORROW's close has posted, finds no row newer than entry's own -
+        # _closest_price then returns the SAME cached row for both entry and
+        # horizon. That produced an exact 0.00% "move" and got scored WRONG
+        # (or CORRECT, depending on direction) purely from a sign comparison
+        # against a fabricated zero, not a real market move. If the horizon
+        # price isn't from a trading day strictly after the entry price's,
+        # the real next close simply hasn't posted yet - PENDING, not a
+        # score, same as "wait for data, but the data came back empty."
+        if horizon_price_row.price_date <= entry_price_row.price_date:
+            verdicts.append(PredictionVerdict(
+                p.id, p.symbol, created_at.isoformat(), p.direction, p.confidence_pct,
+                entry_price_row.close, horizon_price_row.close, None, "PENDING",
+            ))
+            continue
+
         actual_move_pct = (horizon_price_row.close - entry_price_row.close) / entry_price_row.close * 100
         predicted_up = p.direction == "LONG"
         actual_up = actual_move_pct > 0
