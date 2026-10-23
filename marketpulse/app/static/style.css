@@ -50,7 +50,7 @@ main {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
 }
 @media (max-width: 1050px) {
   .grid-2 { grid-template-columns: 1fr; }
@@ -62,6 +62,8 @@ main {
   border-radius: 10px;
   padding: 14px 16px;
   min-width: 0; /* let tables shrink/scroll instead of blowing out the grid column */
+  display: flex;
+  flex-direction: column;
 }
 
 .card h2 {
@@ -151,7 +153,8 @@ button:disabled { opacity: 0.5; cursor: default; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 8px;
+  margin-top: auto;
+  padding-top: 8px;
   font-size: 11px;
   color: var(--text-muted);
 }
