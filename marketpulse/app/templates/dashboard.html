@@ -63,6 +63,31 @@
     </p>
   </div>
 
+  <div class="card">
+    <h2>Aprendizaje del modelo - pesos actuales de la predicción</h2>
+    <p class="reasoning-note" style="margin-top:0;">
+      Cada componente (sentimiento de noticias, analogías históricas, tendencia reciente) tiene un peso en la fórmula.
+      Cada tantas horas, el sistema revisa cuántas predicciones YA tuvieron veredicto real y mide qué tan bien le
+      pegó cada componente por separado - al que más acierta se le sube el peso, al que menos, se le baja. Nunca se
+      ajusta con pocos datos ni de golpe: hace falta una muestra mínima real, y el cambio es gradual.
+    </p>
+    <div class="outlook-grid" id="learning-weights"></div>
+    <p class="reasoning-note" id="learning-status" style="margin-top:10px;"></p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Fecha</th><th>Noticias</th><th>Analogías</th><th>Tendencia</th><th>Muestra</th><th>Detalle</th></tr></thead>
+        <tbody id="learning-rows"></tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <span id="learning-page-info"></span>
+      <div style="display:flex; gap:8px;">
+        <button id="learning-prev">Anterior</button>
+        <button id="learning-next">Siguiente</button>
+      </div>
+    </div>
+  </div>
+
   <div class="grid-2">
     <div class="card">
       <h2>Predicciones por ticker</h2>
@@ -389,8 +414,58 @@ async function loadBacktest() {
   document.getElementById("backtest-next").disabled = page.page * page.page_size >= page.total;
 }
 
+const learningState = { page: 1, page_size: 3 };
+
+function pctPoint(v) {
+  return v === null || v === undefined ? "—" : (v * 100).toFixed(1) + "%";
+}
+
+async function loadLearning() {
+  const params = new URLSearchParams({ page: learningState.page, page_size: learningState.page_size });
+  const res = await fetch("/api/v1/learning?" + params.toString());
+  const d = await res.json();
+  const c = d.current;
+
+  document.getElementById("learning-weights").innerHTML = `
+    <div><div class="stat-label">Peso: sentimiento de noticias</div><div class="stat-value">${(c.news_weight * 100).toFixed(1)}%</div></div>
+    <div><div class="stat-label">Peso: analogías históricas</div><div class="stat-value">${(c.analogue_weight * 100).toFixed(1)}%</div></div>
+    <div><div class="stat-label">Peso: tendencia reciente</div><div class="stat-value">${(c.trend_weight * 100).toFixed(1)}%</div></div>
+  `;
+  const statusEl = document.getElementById("learning-status");
+  if (!c.is_learned) {
+    statusEl.textContent = "Todavía usando los pesos iniciales - hace falta una muestra real mínima de predicciones con veredicto antes del primer ajuste.";
+  } else {
+    statusEl.textContent = `Último ajuste: ${new Date(c.last_adjustment.created_at).toLocaleString("es-AR")} (muestra de ${c.last_adjustment.sample_size} predicciones con veredicto real).`;
+  }
+
+  const page = d.history;
+  const tbody = document.getElementById("learning-rows");
+  tbody.innerHTML = "";
+  for (const a of page.items) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="muted">${new Date(a.created_at).toLocaleString("es-AR")}</td>
+      <td>${(a.news_weight * 100).toFixed(1)}% <span class="muted">(acierto ${pctPoint(a.news_hit_rate)})</span></td>
+      <td>${(a.analogue_weight * 100).toFixed(1)}% <span class="muted">(acierto ${pctPoint(a.analogue_hit_rate)})</span></td>
+      <td>${(a.trend_weight * 100).toFixed(1)}% <span class="muted">(acierto ${pctPoint(a.trend_hit_rate)})</span></td>
+      <td>${a.sample_size}</td>
+      <td class="muted" style="font-size:10.5px;">${a.note}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+  if (page.items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">Todavía no hubo ningún ajuste.</td></tr>';
+  }
+  learningState.page = page.page;
+  renderPageInfo("learning-page-info", page.page, page.page_size, page.total);
+  document.getElementById("learning-prev").disabled = page.page <= 1;
+  document.getElementById("learning-next").disabled = page.page * page.page_size >= page.total;
+}
+
 async function loadAll(fresh) {
-  await Promise.allSettled([loadOutlook(fresh), loadOutlooksAll(), loadNews(), loadAnalogues(), loadBacktest()]);
+  await Promise.allSettled([
+    loadOutlook(fresh), loadOutlooksAll(), loadNews(), loadAnalogues(), loadBacktest(), loadLearning(),
+  ]);
 }
 
 document.getElementById("refresh-btn").addEventListener("click", async () => {
@@ -490,6 +565,13 @@ document.getElementById("news-prev").addEventListener("click", () => {
 });
 document.getElementById("news-next").addEventListener("click", () => {
   newsState.page += 1; loadNews();
+});
+
+document.getElementById("learning-prev").addEventListener("click", () => {
+  if (learningState.page > 1) { learningState.page -= 1; loadLearning(); }
+});
+document.getElementById("learning-next").addEventListener("click", () => {
+  learningState.page += 1; loadLearning();
 });
 
 let autoRefreshTimer = null;

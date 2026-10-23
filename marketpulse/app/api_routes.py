@@ -18,7 +18,8 @@ from .config import settings
 from .db import get_db
 from .events_backfill import backfill_pending_event_moves
 from .ingest import ingest_all_feeds, prune_old_data, refresh_price_cache
-from .models import HistoricalEvent, NewsArticle, Prediction, User
+from .learning import DEFAULT_WEIGHTS, update_weights_if_due
+from .models import HistoricalEvent, NewsArticle, Prediction, User, WeightAdjustment
 from .predictor import (
     PREDICTION_HORIZON_HOURS,
     generate_all_predictions,
@@ -313,6 +314,78 @@ def backtest(
     }
 
 
+class WeightAdjustmentResponse(BaseModel):
+    created_at: str
+    news_weight: float
+    analogue_weight: float
+    trend_weight: float
+    news_hit_rate: float | None
+    analogue_hit_rate: float | None
+    trend_hit_rate: float | None
+    sample_size: int
+    note: str
+
+
+class CurrentWeightsResponse(BaseModel):
+    news_weight: float
+    analogue_weight: float
+    trend_weight: float
+    is_learned: bool  # false until the very first real adjustment has happened
+    last_adjustment: WeightAdjustmentResponse | None
+
+
+class PaginatedWeightHistoryResponse(BaseModel):
+    items: list[WeightAdjustmentResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+def _to_weight_adjustment_response(row: WeightAdjustment) -> WeightAdjustmentResponse:
+    return WeightAdjustmentResponse(
+        created_at=row.created_at.isoformat(), news_weight=row.news_weight, analogue_weight=row.analogue_weight,
+        trend_weight=row.trend_weight, news_hit_rate=row.news_hit_rate, analogue_hit_rate=row.analogue_hit_rate,
+        trend_hit_rate=row.trend_hit_rate, sample_size=row.sample_size, note=row.note,
+    )
+
+
+@router.get("/learning")
+def learning_state(page: int = 1, page_size: int = 3, db: Session = Depends(get_db)) -> dict:
+    """Requested directly by the user ("me gustaría que vaya aprendiendo"):
+    the model's three blend weights (news sentiment / historical analogues /
+    recent trend) are periodically nudged by app/learning.py based on each
+    component's own real, scored track record - this exposes the weights
+    currently in effect plus a full, paginated audit log of every past
+    adjustment and the exact hit-rate numbers that justified it, so nothing
+    about "the model learning" is a hidden/opaque change."""
+    latest = db.query(WeightAdjustment).order_by(WeightAdjustment.created_at.desc()).first()
+    current = CurrentWeightsResponse(
+        news_weight=latest.news_weight if latest else DEFAULT_WEIGHTS["news"],
+        analogue_weight=latest.analogue_weight if latest else DEFAULT_WEIGHTS["analogue"],
+        trend_weight=latest.trend_weight if latest else DEFAULT_WEIGHTS["trend"],
+        is_learned=latest is not None,
+        last_adjustment=_to_weight_adjustment_response(latest) if latest else None,
+    )
+
+    page = max(page, 1)
+    page_size = max(1, min(page_size, 100))
+    total = db.query(WeightAdjustment).count()
+    rows = (
+        db.query(WeightAdjustment)
+        .order_by(WeightAdjustment.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    return {
+        "current": current,
+        "history": PaginatedWeightHistoryResponse(
+            items=[_to_weight_adjustment_response(r) for r in rows], total=total, page=page, page_size=page_size,
+        ),
+    }
+
+
 @router.post("/ingest-now")
 def trigger_ingest_now(db: Session = Depends(get_db), _: User = Depends(get_current_user)) -> dict:
     """Manual trigger for the dashboard's "Actualizar ahora" button - runs
@@ -321,6 +394,7 @@ def trigger_ingest_now(db: Session = Depends(get_db), _: User = Depends(get_curr
     inserted = ingest_all_feeds(db)
     prune_old_data(db)
     backfill_pending_event_moves(db)
+    update_weights_if_due(db)
 
     results = generate_all_predictions(db)
     for sym in results:
